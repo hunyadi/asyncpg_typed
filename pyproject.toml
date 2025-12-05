@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=80.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asyncpg_typed"
+description = "Type-safe queries for asyncpg"
+readme = { file = "README.md", content-type = "text/markdown" }
+keywords = ["asyncpg", "typed", "database-client"]
+license = "MIT"
+authors = [
+    { name = "Levente Hunyadi", email = "hunyadi@gmail.com" }
+]
+maintainers = [
+    { name = "Levente Hunyadi", email = "hunyadi@gmail.com" }
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: SQL",
+    "Topic :: Database",
+    "Topic :: Utilities",
+    "Typing :: Typed"
+]
+dependencies = [
+    "asyncpg >= 0.31"
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+vector = [
+    "asyncpg_vector >= 0.1"
+]
+dev = [
+    "asyncpg-stubs >= 0.31",
+    "build >= 1.3",
+    "mypy >= 1.19",
+    "ruff >= 0.14"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/hunyadi/asyncpg_typed"
+"Source" = "https://github.com/hunyadi/asyncpg_typed"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["asyncpg_typed"]
+zip-safe = true
+
+[tool.setuptools.dynamic]
+version = { attr = "asyncpg_typed.__version__" }
+
+[tool.setuptools.package-data]
+"asyncpg_typed" = ["py.typed"]
+
+[tool.ruff]
+line-length = 240
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "Q"]
