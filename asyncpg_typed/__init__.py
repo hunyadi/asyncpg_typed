@@ -13,13 +13,13 @@ __status__ = "Production"
 
 import sys
 from abc import abstractmethod
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from datetime import date, datetime, time
 from decimal import Decimal
 from functools import reduce
 from io import StringIO
 from types import UnionType
-from typing import Any, Generic, TypeAlias, TypeVar, Union, get_args, get_origin, overload
+from typing import Any, Generic, NoReturn, TypeAlias, TypeVar, Union, get_args, get_origin, overload
 from uuid import UUID
 
 from asyncpg import Connection
@@ -27,6 +27,9 @@ from asyncpg.prepared_stmt import PreparedStatement
 
 JsonType = None | bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
 RequiredJsonType = bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
+
+NUM_ARGS = 8
+NUM_RESULTS = 8
 
 
 def is_union_type(tp: Any) -> bool:
@@ -80,17 +83,6 @@ def get_required_type(tp: Any) -> Any:
         return tpl[0]
     else:
         return type(None)
-
-
-def get_null_checker(data_type: type[Any]) -> Callable[[Any], bool] | None:
-    """
-    Returns a lambda function that verifies if a required value is not assigned a NULL value (a.k.a. `None`).
-    """
-
-    if not is_optional_type(data_type):
-        return lambda value: value is not None
-    else:
-        return None
 
 
 # maps PostgreSQL internal type names to Python types
@@ -153,7 +145,7 @@ class _SQLObject:
 
     parameter_data_types: tuple[_SQLPlaceholder, ...]
     resultset_data_types: tuple[type[Any], ...]
-    checkers: list[Callable[[Any], bool] | None]
+    required: int
 
     def __init__(
         self,
@@ -171,38 +163,122 @@ class _SQLObject:
         else:
             self.resultset_data_types = ()
 
-        self.checkers = [get_null_checker(data_type) for data_type in self.resultset_data_types]
+        # create a bit-field of required types (1: required; 0: optional)
+        required = 0
+        for index, data_type in enumerate(self.resultset_data_types):
+            required |= (not is_optional_type(data_type)) << index
+        self.required = required
+
+    def _raise_required_is_none(self, row: tuple[Any, ...], row_index: int | None = None) -> NoReturn:
+        """
+        Raises an error with the index of the first column value that is of a required type but has been assigned a value of `None`.
+        """
+
+        for col_index in range(len(row)):
+            if (self.required >> col_index & 1) and row[col_index] is None:
+                if row_index is not None:
+                    row_col_spec = f"row #{row_index} and column #{col_index}"
+                else:
+                    row_col_spec = f"column #{col_index}"
+                raise TypeError(f"expected: {self.resultset_data_types[col_index]} in {row_col_spec}; got: NULL")
+
+        raise NotImplementedError("unexpected code path")
 
     def check_rows(self, rows: list[tuple[Any, ...]]) -> None:
         """
         Verifies if declared types match actual value types in a resultset.
         """
 
-        checkers = self.checkers
-        for r, row in enumerate(rows):
-            for c in range(len(checkers)):
-                checker = checkers[c]
-                if checker is not None and not checker(row[c]):
-                    raise TypeError(f"expected: {self.resultset_data_types[c]} in row #{r} and column #{c}; got: NULL")
+        if not rows:
+            return
+
+        required = self.required
+        if not required:
+            return
+
+        assert NUM_RESULTS <= 8
+
+        match len(rows[0]):
+            case 1:
+                for r, row in enumerate(rows):
+                    if required & (row[0] is None):
+                        self._raise_required_is_none(row, r)
+            case 2:
+                for r, row in enumerate(rows):
+                    if required & ((row[0] is None) | (row[1] is None) << 1):
+                        self._raise_required_is_none(row, r)
+            case 3:
+                for r, row in enumerate(rows):
+                    if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2):
+                        self._raise_required_is_none(row, r)
+            case 4:
+                for r, row in enumerate(rows):
+                    if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2 | (row[3] is None) << 3):
+                        self._raise_required_is_none(row, r)
+            case 5:
+                for r, row in enumerate(rows):
+                    if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2 | (row[3] is None) << 3 | (row[4] is None) << 4):
+                        self._raise_required_is_none(row, r)
+            case 6:
+                for r, row in enumerate(rows):
+                    if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2 | (row[3] is None) << 3 | (row[4] is None) << 4 | (row[5] is None) << 5):
+                        self._raise_required_is_none(row, r)
+            case 7:
+                for r, row in enumerate(rows):
+                    if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2 | (row[3] is None) << 3 | (row[4] is None) << 4 | (row[5] is None) << 5 | (row[6] is None) << 6):
+                        self._raise_required_is_none(row, r)
+            case 8:
+                for r, row in enumerate(rows):
+                    if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2 | (row[3] is None) << 3 | (row[4] is None) << 4 | (row[5] is None) << 5 | (row[6] is None) << 6 | (row[7] is None) << 7):
+                        self._raise_required_is_none(row, r)
+            case _:
+                pass
 
     def check_row(self, row: tuple[Any, ...]) -> None:
         """
         Verifies if declared types match actual value types in a single row.
         """
 
-        checkers = self.checkers
-        for c in range(len(checkers)):
-            checker = checkers[c]
-            if checker is not None and not checker(row[c]):
-                raise TypeError(f"expected: {self.resultset_data_types[c]} in column #{c}; got: NULL")
+        required = self.required
+        if not required:
+            return
+
+        assert NUM_RESULTS <= 8
+
+        match len(row):
+            case 1:
+                if required & (row[0] is None):
+                    self._raise_required_is_none(row)
+            case 2:
+                if required & ((row[0] is None) | (row[1] is None) << 1):
+                    self._raise_required_is_none(row)
+            case 3:
+                if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2):
+                    self._raise_required_is_none(row)
+            case 4:
+                if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2 | (row[3] is None) << 3):
+                    self._raise_required_is_none(row)
+            case 5:
+                if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2 | (row[3] is None) << 3 | (row[4] is None) << 4):
+                    self._raise_required_is_none(row)
+            case 6:
+                if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2 | (row[3] is None) << 3 | (row[4] is None) << 4 | (row[5] is None) << 5):
+                    self._raise_required_is_none(row)
+            case 7:
+                if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2 | (row[3] is None) << 3 | (row[4] is None) << 4 | (row[5] is None) << 5 | (row[6] is None) << 6):
+                    self._raise_required_is_none(row)
+            case 8:
+                if required & ((row[0] is None) | (row[1] is None) << 1 | (row[2] is None) << 2 | (row[3] is None) << 3 | (row[4] is None) << 4 | (row[5] is None) << 5 | (row[6] is None) << 6 | (row[7] is None) << 7):
+                    self._raise_required_is_none(row)
+            case _:
+                pass
 
     def check_value(self, value: Any) -> None:
         """
         Verifies if the declared type matches the actual value type.
         """
 
-        checker = self.checkers[0]
-        if checker is not None and not checker(value):
+        if self.required and value is None:
             raise TypeError(f"expected: {self.resultset_data_types[0]}; got: NULL")
 
     @abstractmethod
@@ -321,7 +397,7 @@ class _SQLImpl(_SQL):
 
         for attr, data_type in zip(stmt.get_attributes(), self.sql.resultset_data_types, strict=True):
             if not check_data_type(attr.type.name, data_type):
-                raise TypeError(f"expected: {data_type} in column `{attr.name}`; got: {attr.type.kind} of {attr.type.name}")
+                raise TypeError(f"expected: {data_type} in column `{attr.name}`; got: `{attr.type.kind}` of `{attr.type.name}`")
 
         return stmt
 

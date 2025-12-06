@@ -10,6 +10,8 @@ from io import StringIO
 from pathlib import Path
 from typing import TextIO
 
+from asyncpg_typed import NUM_ARGS, NUM_RESULTS
+
 
 def _args_and_results(p: int, r: int) -> str:
     items: list[str] = []
@@ -49,9 +51,6 @@ def _typespec(p: int, r: int) -> str:
 
 
 def write_code(out: TextIO, *, use_modern_generic_syntax: bool = False) -> None:
-    NUM_ARGS = 8
-    NUM_RESULTS = 8
-
     if not use_modern_generic_syntax:
         for p in range(1, NUM_ARGS + 1):
             print(f'P{p} = TypeVar("P{p}")', file=out)
