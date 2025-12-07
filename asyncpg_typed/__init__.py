@@ -12,6 +12,7 @@ __maintainer__ = "Levente Hunyadi"
 __status__ = "Production"
 
 import sys
+import typing
 from abc import abstractmethod
 from collections.abc import Iterable, Sequence
 from datetime import date, datetime, time
@@ -22,13 +23,16 @@ from types import UnionType
 from typing import Any, Generic, NoReturn, TypeAlias, TypeVar, Union, get_args, get_origin, overload
 from uuid import UUID
 
-from asyncpg import Connection
+import asyncpg
 from asyncpg.prepared_stmt import PreparedStatement
 
-JsonType = None | bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
-RequiredJsonType = bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
+# list of supported data types
+DATA_TYPES: list[type[Any]] = [bool, int, float, Decimal, date, time, datetime, str, bytes, UUID]
 
+# maximum number of inbound query parameters
 NUM_ARGS = 8
+
+# maximum number of outbound resultset columns
 NUM_RESULTS = 8
 
 
@@ -94,18 +98,18 @@ _name_to_type: dict[str, Any] = {
     "float4": float,
     "float8": float,
     "numeric": Decimal,
-    "bytea": bytes,
-    "bpchar": str,
-    "varchar": str,
-    "text": str,
     "date": date,
     "time": time,
     "timetz": time,
     "timestamp": datetime,
     "timestamptz": datetime,
+    "bpchar": str,
+    "varchar": str,
+    "text": str,
+    "bytea": bytes,
+    "json": str,
+    "jsonb": str,
     "uuid": UUID,
-    "json": RequiredJsonType,
-    "jsonb": RequiredJsonType,
 }
 
 
@@ -135,7 +139,7 @@ class _SQLPlaceholder:
         self.data_type = data_type
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self.ordinal}, {self.data_type.__name__})"
+        return f"{self.__class__.__name__}({self.ordinal}, {self.data_type!r})"
 
 
 class _SQLObject:
@@ -150,16 +154,22 @@ class _SQLObject:
     def __init__(
         self,
         *,
-        args: type[tuple[Any, ...]] | None = None,
-        resultset: type[tuple[Any, ...]] | None = None,
+        args: type[Any] | None = None,
+        resultset: type[Any] | None = None,
     ) -> None:
         if args is not None:
-            self.parameter_data_types = tuple(_SQLPlaceholder(ordinal, arg) for ordinal, arg in enumerate(get_args(args), start=1))
+            if get_origin(args) is tuple:
+                self.parameter_data_types = tuple(_SQLPlaceholder(ordinal, arg) for ordinal, arg in enumerate(get_args(args), start=1))
+            else:
+                self.parameter_data_types = (_SQLPlaceholder(1, args),)
         else:
             self.parameter_data_types = ()
 
         if resultset is not None:
-            self.resultset_data_types = get_args(resultset)
+            if get_origin(resultset) is tuple:
+                self.resultset_data_types = get_args(resultset)
+            else:
+                self.resultset_data_types = (resultset,)
         else:
             self.resultset_data_types = ()
 
@@ -312,8 +322,8 @@ if sys.version_info >= (3, 14):
             self,
             template: Template,
             *,
-            args: type[tuple[Any, ...]] | None = None,
-            resultset: type[tuple[Any, ...]] | None = None,
+            args: type[Any] | None = None,
+            resultset: type[Any] | None = None,
         ) -> None:
             super().__init__(args=args, resultset=resultset)
 
@@ -362,8 +372,8 @@ class _SQLString(_SQLObject):
         self,
         sql: str,
         *,
-        args: type[tuple[Any, ...]] | None = None,
-        resultset: type[tuple[Any, ...]] | None = None,
+        args: type[Any] | None = None,
+        resultset: type[Any] | None = None,
     ) -> None:
         super().__init__(args=args, resultset=resultset)
         self.sql = sql
@@ -373,7 +383,12 @@ class _SQLString(_SQLObject):
 
 
 class _SQL:
-    pass
+    """
+    Represents a SQL statement with associated type information.
+    """
+
+
+Connection: TypeAlias = asyncpg.Connection | asyncpg.pool.PoolConnectionProxy
 
 
 class _SQLImpl(_SQL):
@@ -401,21 +416,29 @@ class _SQLImpl(_SQL):
 
         return stmt
 
-    async def execute(self, connection: Connection, *args: Any) -> None:
+    async def execute(self, connection: asyncpg.Connection, *args: Any) -> None:
         await connection.execute(self.sql.query(), *args)
 
-    async def executemany(self, connection: Connection, args: Iterable[Sequence[Any]]) -> None:
+    async def executemany(self, connection: asyncpg.Connection, args: Iterable[Sequence[Any]]) -> None:
         stmt = await self._prepare(connection)
         await stmt.executemany(args)
 
-    async def fetch(self, connection: Connection, *args: Any) -> list[tuple[Any, ...]]:
+    async def fetch(self, connection: asyncpg.Connection, *args: Any) -> list[tuple[Any, ...]]:
         stmt = await self._prepare(connection)
         rows = await stmt.fetch(*args)
         resultset = [tuple(value for value in row) for row in rows]
         self.sql.check_rows(resultset)
         return resultset
 
-    async def fetchrow(self, connection: Connection, *args: Any) -> tuple[Any, ...] | None:
+    async def fetchmany(self, connection: asyncpg.Connection, args: Iterable[Sequence[Any]]) -> list[tuple[Any, ...]]:
+        stmt = await self._prepare(connection)
+        rows = await stmt.fetchmany(args)  # type: ignore[arg-type, call-arg]  # pyright: ignore[reportCallIssue]
+        rows = typing.cast(list[asyncpg.Record], rows)
+        resultset = [tuple(value for value in row) for row in rows]
+        self.sql.check_rows(resultset)
+        return resultset
+
+    async def fetchrow(self, connection: asyncpg.Connection, *args: Any) -> tuple[Any, ...] | None:
         stmt = await self._prepare(connection)
         row = await stmt.fetchrow(*args)
         if row is None:
@@ -424,7 +447,7 @@ class _SQLImpl(_SQL):
         self.sql.check_row(resultset)
         return resultset
 
-    async def fetchval(self, connection: Connection, *args: Any) -> Any:
+    async def fetchval(self, connection: asyncpg.Connection, *args: Any) -> Any:
         stmt = await self._prepare(connection)
         value = await stmt.fetchval(*args)
         self.sql.check_value(value)
@@ -449,6 +472,8 @@ R5 = TypeVar("R5")
 R6 = TypeVar("R6")
 R7 = TypeVar("R7")
 R8 = TypeVar("R8")
+PS = TypeVar("PS", bool, bool | None, int, int | None, float, float | None, Decimal, Decimal | None, date, date | None, time, time | None, datetime, datetime | None, str, str | None, bytes, bytes | None, UUID, UUID | None)
+RS = TypeVar("RS", bool, bool | None, int, int | None, float, float | None, Decimal, Decimal | None, date, date | None, time, time | None, datetime, datetime | None, str, str | None, bytes, bytes | None, UUID, UUID | None)
 
 
 class SQL_P0(_SQL):
@@ -525,6 +550,8 @@ class SQL_P1_R1(Generic[P1, R1], SQL_P1[P1]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1) -> list[tuple[R1]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1]]) -> list[tuple[R1]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1) -> tuple[R1] | None: ...
     @abstractmethod
     async def fetchval(self, connection: Connection, arg1: P1) -> R1: ...
@@ -534,12 +561,16 @@ class SQL_P1_R2(Generic[P1, R1, R2], SQL_P1[P1]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1) -> list[tuple[R1, R2]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1]]) -> list[tuple[R1, R2]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1) -> tuple[R1, R2] | None: ...
 
 
 class SQL_P1_R3(Generic[P1, R1, R2, R3], SQL_P1[P1]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1) -> list[tuple[R1, R2, R3]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1]]) -> list[tuple[R1, R2, R3]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1) -> tuple[R1, R2, R3] | None: ...
 
@@ -548,12 +579,16 @@ class SQL_P1_R4(Generic[P1, R1, R2, R3, R4], SQL_P1[P1]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1) -> list[tuple[R1, R2, R3, R4]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1]]) -> list[tuple[R1, R2, R3, R4]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1) -> tuple[R1, R2, R3, R4] | None: ...
 
 
 class SQL_P1_R5(Generic[P1, R1, R2, R3, R4, R5], SQL_P1[P1]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1) -> list[tuple[R1, R2, R3, R4, R5]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1]]) -> list[tuple[R1, R2, R3, R4, R5]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1) -> tuple[R1, R2, R3, R4, R5] | None: ...
 
@@ -562,6 +597,8 @@ class SQL_P1_R6(Generic[P1, R1, R2, R3, R4, R5, R6], SQL_P1[P1]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1]]) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1) -> tuple[R1, R2, R3, R4, R5, R6] | None: ...
 
 
@@ -569,12 +606,16 @@ class SQL_P1_R7(Generic[P1, R1, R2, R3, R4, R5, R6, R7], SQL_P1[P1]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1) -> tuple[R1, R2, R3, R4, R5, R6, R7] | None: ...
 
 
 class SQL_P1_R8(Generic[P1, R1, R2, R3, R4, R5, R6, R7, R8], SQL_P1[P1]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1) -> tuple[R1, R2, R3, R4, R5, R6, R7, R8] | None: ...
 
@@ -590,6 +631,8 @@ class SQL_P2_R1(Generic[P1, P2, R1], SQL_P2[P1, P2]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2) -> list[tuple[R1]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2]]) -> list[tuple[R1]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2) -> tuple[R1] | None: ...
     @abstractmethod
     async def fetchval(self, connection: Connection, arg1: P1, arg2: P2) -> R1: ...
@@ -599,12 +642,16 @@ class SQL_P2_R2(Generic[P1, P2, R1, R2], SQL_P2[P1, P2]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2) -> list[tuple[R1, R2]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2]]) -> list[tuple[R1, R2]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2) -> tuple[R1, R2] | None: ...
 
 
 class SQL_P2_R3(Generic[P1, P2, R1, R2, R3], SQL_P2[P1, P2]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2) -> list[tuple[R1, R2, R3]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2]]) -> list[tuple[R1, R2, R3]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2) -> tuple[R1, R2, R3] | None: ...
 
@@ -613,12 +660,16 @@ class SQL_P2_R4(Generic[P1, P2, R1, R2, R3, R4], SQL_P2[P1, P2]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2) -> list[tuple[R1, R2, R3, R4]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2]]) -> list[tuple[R1, R2, R3, R4]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2) -> tuple[R1, R2, R3, R4] | None: ...
 
 
 class SQL_P2_R5(Generic[P1, P2, R1, R2, R3, R4, R5], SQL_P2[P1, P2]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2) -> list[tuple[R1, R2, R3, R4, R5]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2]]) -> list[tuple[R1, R2, R3, R4, R5]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2) -> tuple[R1, R2, R3, R4, R5] | None: ...
 
@@ -627,6 +678,8 @@ class SQL_P2_R6(Generic[P1, P2, R1, R2, R3, R4, R5, R6], SQL_P2[P1, P2]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2]]) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2) -> tuple[R1, R2, R3, R4, R5, R6] | None: ...
 
 
@@ -634,12 +687,16 @@ class SQL_P2_R7(Generic[P1, P2, R1, R2, R3, R4, R5, R6, R7], SQL_P2[P1, P2]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2) -> tuple[R1, R2, R3, R4, R5, R6, R7] | None: ...
 
 
 class SQL_P2_R8(Generic[P1, P2, R1, R2, R3, R4, R5, R6, R7, R8], SQL_P2[P1, P2]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2) -> tuple[R1, R2, R3, R4, R5, R6, R7, R8] | None: ...
 
@@ -655,6 +712,8 @@ class SQL_P3_R1(Generic[P1, P2, P3, R1], SQL_P3[P1, P2, P3]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> list[tuple[R1]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3]]) -> list[tuple[R1]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> tuple[R1] | None: ...
     @abstractmethod
     async def fetchval(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> R1: ...
@@ -664,12 +723,16 @@ class SQL_P3_R2(Generic[P1, P2, P3, R1, R2], SQL_P3[P1, P2, P3]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> list[tuple[R1, R2]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3]]) -> list[tuple[R1, R2]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> tuple[R1, R2] | None: ...
 
 
 class SQL_P3_R3(Generic[P1, P2, P3, R1, R2, R3], SQL_P3[P1, P2, P3]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> list[tuple[R1, R2, R3]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3]]) -> list[tuple[R1, R2, R3]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> tuple[R1, R2, R3] | None: ...
 
@@ -678,12 +741,16 @@ class SQL_P3_R4(Generic[P1, P2, P3, R1, R2, R3, R4], SQL_P3[P1, P2, P3]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> list[tuple[R1, R2, R3, R4]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3]]) -> list[tuple[R1, R2, R3, R4]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> tuple[R1, R2, R3, R4] | None: ...
 
 
 class SQL_P3_R5(Generic[P1, P2, P3, R1, R2, R3, R4, R5], SQL_P3[P1, P2, P3]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> list[tuple[R1, R2, R3, R4, R5]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3]]) -> list[tuple[R1, R2, R3, R4, R5]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> tuple[R1, R2, R3, R4, R5] | None: ...
 
@@ -692,6 +759,8 @@ class SQL_P3_R6(Generic[P1, P2, P3, R1, R2, R3, R4, R5, R6], SQL_P3[P1, P2, P3])
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3]]) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> tuple[R1, R2, R3, R4, R5, R6] | None: ...
 
 
@@ -699,12 +768,16 @@ class SQL_P3_R7(Generic[P1, P2, P3, R1, R2, R3, R4, R5, R6, R7], SQL_P3[P1, P2, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> tuple[R1, R2, R3, R4, R5, R6, R7] | None: ...
 
 
 class SQL_P3_R8(Generic[P1, P2, P3, R1, R2, R3, R4, R5, R6, R7, R8], SQL_P3[P1, P2, P3]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3) -> tuple[R1, R2, R3, R4, R5, R6, R7, R8] | None: ...
 
@@ -720,6 +793,8 @@ class SQL_P4_R1(Generic[P1, P2, P3, P4, R1], SQL_P4[P1, P2, P3, P4]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> list[tuple[R1]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4]]) -> list[tuple[R1]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> tuple[R1] | None: ...
     @abstractmethod
     async def fetchval(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> R1: ...
@@ -729,12 +804,16 @@ class SQL_P4_R2(Generic[P1, P2, P3, P4, R1, R2], SQL_P4[P1, P2, P3, P4]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> list[tuple[R1, R2]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4]]) -> list[tuple[R1, R2]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> tuple[R1, R2] | None: ...
 
 
 class SQL_P4_R3(Generic[P1, P2, P3, P4, R1, R2, R3], SQL_P4[P1, P2, P3, P4]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> list[tuple[R1, R2, R3]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4]]) -> list[tuple[R1, R2, R3]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> tuple[R1, R2, R3] | None: ...
 
@@ -743,12 +822,16 @@ class SQL_P4_R4(Generic[P1, P2, P3, P4, R1, R2, R3, R4], SQL_P4[P1, P2, P3, P4])
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> list[tuple[R1, R2, R3, R4]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4]]) -> list[tuple[R1, R2, R3, R4]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> tuple[R1, R2, R3, R4] | None: ...
 
 
 class SQL_P4_R5(Generic[P1, P2, P3, P4, R1, R2, R3, R4, R5], SQL_P4[P1, P2, P3, P4]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> list[tuple[R1, R2, R3, R4, R5]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4]]) -> list[tuple[R1, R2, R3, R4, R5]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> tuple[R1, R2, R3, R4, R5] | None: ...
 
@@ -757,6 +840,8 @@ class SQL_P4_R6(Generic[P1, P2, P3, P4, R1, R2, R3, R4, R5, R6], SQL_P4[P1, P2, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4]]) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> tuple[R1, R2, R3, R4, R5, R6] | None: ...
 
 
@@ -764,12 +849,16 @@ class SQL_P4_R7(Generic[P1, P2, P3, P4, R1, R2, R3, R4, R5, R6, R7], SQL_P4[P1, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> tuple[R1, R2, R3, R4, R5, R6, R7] | None: ...
 
 
 class SQL_P4_R8(Generic[P1, P2, P3, P4, R1, R2, R3, R4, R5, R6, R7, R8], SQL_P4[P1, P2, P3, P4]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4) -> tuple[R1, R2, R3, R4, R5, R6, R7, R8] | None: ...
 
@@ -785,6 +874,8 @@ class SQL_P5_R1(Generic[P1, P2, P3, P4, P5, R1], SQL_P5[P1, P2, P3, P4, P5]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> list[tuple[R1]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5]]) -> list[tuple[R1]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> tuple[R1] | None: ...
     @abstractmethod
     async def fetchval(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> R1: ...
@@ -794,12 +885,16 @@ class SQL_P5_R2(Generic[P1, P2, P3, P4, P5, R1, R2], SQL_P5[P1, P2, P3, P4, P5])
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> list[tuple[R1, R2]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5]]) -> list[tuple[R1, R2]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> tuple[R1, R2] | None: ...
 
 
 class SQL_P5_R3(Generic[P1, P2, P3, P4, P5, R1, R2, R3], SQL_P5[P1, P2, P3, P4, P5]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> list[tuple[R1, R2, R3]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5]]) -> list[tuple[R1, R2, R3]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> tuple[R1, R2, R3] | None: ...
 
@@ -808,12 +903,16 @@ class SQL_P5_R4(Generic[P1, P2, P3, P4, P5, R1, R2, R3, R4], SQL_P5[P1, P2, P3, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> list[tuple[R1, R2, R3, R4]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5]]) -> list[tuple[R1, R2, R3, R4]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> tuple[R1, R2, R3, R4] | None: ...
 
 
 class SQL_P5_R5(Generic[P1, P2, P3, P4, P5, R1, R2, R3, R4, R5], SQL_P5[P1, P2, P3, P4, P5]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> list[tuple[R1, R2, R3, R4, R5]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5]]) -> list[tuple[R1, R2, R3, R4, R5]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> tuple[R1, R2, R3, R4, R5] | None: ...
 
@@ -822,6 +921,8 @@ class SQL_P5_R6(Generic[P1, P2, P3, P4, P5, R1, R2, R3, R4, R5, R6], SQL_P5[P1, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5]]) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> tuple[R1, R2, R3, R4, R5, R6] | None: ...
 
 
@@ -829,12 +930,16 @@ class SQL_P5_R7(Generic[P1, P2, P3, P4, P5, R1, R2, R3, R4, R5, R6, R7], SQL_P5[
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> tuple[R1, R2, R3, R4, R5, R6, R7] | None: ...
 
 
 class SQL_P5_R8(Generic[P1, P2, P3, P4, P5, R1, R2, R3, R4, R5, R6, R7, R8], SQL_P5[P1, P2, P3, P4, P5]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5) -> tuple[R1, R2, R3, R4, R5, R6, R7, R8] | None: ...
 
@@ -850,6 +955,8 @@ class SQL_P6_R1(Generic[P1, P2, P3, P4, P5, P6, R1], SQL_P6[P1, P2, P3, P4, P5, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> list[tuple[R1]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6]]) -> list[tuple[R1]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> tuple[R1] | None: ...
     @abstractmethod
     async def fetchval(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> R1: ...
@@ -859,12 +966,16 @@ class SQL_P6_R2(Generic[P1, P2, P3, P4, P5, P6, R1, R2], SQL_P6[P1, P2, P3, P4, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> list[tuple[R1, R2]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6]]) -> list[tuple[R1, R2]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> tuple[R1, R2] | None: ...
 
 
 class SQL_P6_R3(Generic[P1, P2, P3, P4, P5, P6, R1, R2, R3], SQL_P6[P1, P2, P3, P4, P5, P6]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> list[tuple[R1, R2, R3]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6]]) -> list[tuple[R1, R2, R3]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> tuple[R1, R2, R3] | None: ...
 
@@ -873,12 +984,16 @@ class SQL_P6_R4(Generic[P1, P2, P3, P4, P5, P6, R1, R2, R3, R4], SQL_P6[P1, P2, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> list[tuple[R1, R2, R3, R4]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6]]) -> list[tuple[R1, R2, R3, R4]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> tuple[R1, R2, R3, R4] | None: ...
 
 
 class SQL_P6_R5(Generic[P1, P2, P3, P4, P5, P6, R1, R2, R3, R4, R5], SQL_P6[P1, P2, P3, P4, P5, P6]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> list[tuple[R1, R2, R3, R4, R5]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6]]) -> list[tuple[R1, R2, R3, R4, R5]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> tuple[R1, R2, R3, R4, R5] | None: ...
 
@@ -887,6 +1002,8 @@ class SQL_P6_R6(Generic[P1, P2, P3, P4, P5, P6, R1, R2, R3, R4, R5, R6], SQL_P6[
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6]]) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> tuple[R1, R2, R3, R4, R5, R6] | None: ...
 
 
@@ -894,12 +1011,16 @@ class SQL_P6_R7(Generic[P1, P2, P3, P4, P5, P6, R1, R2, R3, R4, R5, R6, R7], SQL
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> tuple[R1, R2, R3, R4, R5, R6, R7] | None: ...
 
 
 class SQL_P6_R8(Generic[P1, P2, P3, P4, P5, P6, R1, R2, R3, R4, R5, R6, R7, R8], SQL_P6[P1, P2, P3, P4, P5, P6]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6) -> tuple[R1, R2, R3, R4, R5, R6, R7, R8] | None: ...
 
@@ -915,6 +1036,8 @@ class SQL_P7_R1(Generic[P1, P2, P3, P4, P5, P6, P7, R1], SQL_P7[P1, P2, P3, P4, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> list[tuple[R1]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7]]) -> list[tuple[R1]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> tuple[R1] | None: ...
     @abstractmethod
     async def fetchval(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> R1: ...
@@ -924,12 +1047,16 @@ class SQL_P7_R2(Generic[P1, P2, P3, P4, P5, P6, P7, R1, R2], SQL_P7[P1, P2, P3, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> list[tuple[R1, R2]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7]]) -> list[tuple[R1, R2]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> tuple[R1, R2] | None: ...
 
 
 class SQL_P7_R3(Generic[P1, P2, P3, P4, P5, P6, P7, R1, R2, R3], SQL_P7[P1, P2, P3, P4, P5, P6, P7]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> list[tuple[R1, R2, R3]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7]]) -> list[tuple[R1, R2, R3]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> tuple[R1, R2, R3] | None: ...
 
@@ -938,12 +1065,16 @@ class SQL_P7_R4(Generic[P1, P2, P3, P4, P5, P6, P7, R1, R2, R3, R4], SQL_P7[P1, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> list[tuple[R1, R2, R3, R4]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7]]) -> list[tuple[R1, R2, R3, R4]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> tuple[R1, R2, R3, R4] | None: ...
 
 
 class SQL_P7_R5(Generic[P1, P2, P3, P4, P5, P6, P7, R1, R2, R3, R4, R5], SQL_P7[P1, P2, P3, P4, P5, P6, P7]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> list[tuple[R1, R2, R3, R4, R5]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7]]) -> list[tuple[R1, R2, R3, R4, R5]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> tuple[R1, R2, R3, R4, R5] | None: ...
 
@@ -952,6 +1083,8 @@ class SQL_P7_R6(Generic[P1, P2, P3, P4, P5, P6, P7, R1, R2, R3, R4, R5, R6], SQL
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7]]) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> tuple[R1, R2, R3, R4, R5, R6] | None: ...
 
 
@@ -959,12 +1092,16 @@ class SQL_P7_R7(Generic[P1, P2, P3, P4, P5, P6, P7, R1, R2, R3, R4, R5, R6, R7],
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> tuple[R1, R2, R3, R4, R5, R6, R7] | None: ...
 
 
 class SQL_P7_R8(Generic[P1, P2, P3, P4, P5, P6, P7, R1, R2, R3, R4, R5, R6, R7, R8], SQL_P7[P1, P2, P3, P4, P5, P6, P7]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7) -> tuple[R1, R2, R3, R4, R5, R6, R7, R8] | None: ...
 
@@ -980,6 +1117,8 @@ class SQL_P8_R1(Generic[P1, P2, P3, P4, P5, P6, P7, P8, R1], SQL_P8[P1, P2, P3, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> list[tuple[R1]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7, P8]]) -> list[tuple[R1]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> tuple[R1] | None: ...
     @abstractmethod
     async def fetchval(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> R1: ...
@@ -989,12 +1128,16 @@ class SQL_P8_R2(Generic[P1, P2, P3, P4, P5, P6, P7, P8, R1, R2], SQL_P8[P1, P2, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> list[tuple[R1, R2]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7, P8]]) -> list[tuple[R1, R2]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> tuple[R1, R2] | None: ...
 
 
 class SQL_P8_R3(Generic[P1, P2, P3, P4, P5, P6, P7, P8, R1, R2, R3], SQL_P8[P1, P2, P3, P4, P5, P6, P7, P8]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> list[tuple[R1, R2, R3]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7, P8]]) -> list[tuple[R1, R2, R3]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> tuple[R1, R2, R3] | None: ...
 
@@ -1003,12 +1146,16 @@ class SQL_P8_R4(Generic[P1, P2, P3, P4, P5, P6, P7, P8, R1, R2, R3, R4], SQL_P8[
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> list[tuple[R1, R2, R3, R4]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7, P8]]) -> list[tuple[R1, R2, R3, R4]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> tuple[R1, R2, R3, R4] | None: ...
 
 
 class SQL_P8_R5(Generic[P1, P2, P3, P4, P5, P6, P7, P8, R1, R2, R3, R4, R5], SQL_P8[P1, P2, P3, P4, P5, P6, P7, P8]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> list[tuple[R1, R2, R3, R4, R5]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7, P8]]) -> list[tuple[R1, R2, R3, R4, R5]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> tuple[R1, R2, R3, R4, R5] | None: ...
 
@@ -1017,12 +1164,16 @@ class SQL_P8_R6(Generic[P1, P2, P3, P4, P5, P6, P7, P8, R1, R2, R3, R4, R5, R6],
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7, P8]]) -> list[tuple[R1, R2, R3, R4, R5, R6]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> tuple[R1, R2, R3, R4, R5, R6] | None: ...
 
 
 class SQL_P8_R7(Generic[P1, P2, P3, P4, P5, P6, P7, P8, R1, R2, R3, R4, R5, R6, R7], SQL_P8[P1, P2, P3, P4, P5, P6, P7, P8]):
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
+    @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7, P8]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> tuple[R1, R2, R3, R4, R5, R6, R7] | None: ...
 
@@ -1031,11 +1182,15 @@ class SQL_P8_R8(Generic[P1, P2, P3, P4, P5, P6, P7, P8, R1, R2, R3, R4, R5, R6, 
     @abstractmethod
     async def fetch(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
     @abstractmethod
+    async def fetchmany(self, connection: Connection, args: Iterable[tuple[P1, P2, P3, P4, P5, P6, P7, P8]]) -> list[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]: ...
+    @abstractmethod
     async def fetchrow(self, connection: Connection, arg1: P1, arg2: P2, arg3: P3, arg4: P4, arg5: P5, arg6: P6, arg7: P7, arg8: P8) -> tuple[R1, R2, R3, R4, R5, R6, R7, R8] | None: ...
 
 
 @overload
 def sql(stmt: SQLExpression) -> SQL_P0: ...
+@overload
+def sql(stmt: SQLExpression, *, resultset: type[RS]) -> SQL_P0_R1[RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, resultset: type[tuple[R1]]) -> SQL_P0_R1[R1]: ...
 @overload
@@ -1053,25 +1208,45 @@ def sql(stmt: SQLExpression, *, resultset: type[tuple[R1, R2, R3, R4, R5, R6, R7
 @overload
 def sql(stmt: SQLExpression, *, resultset: type[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]) -> SQL_P0_R8[R1, R2, R3, R4, R5, R6, R7, R8]: ...
 @overload
+def sql(stmt: SQLExpression, *, args: type[PS]) -> SQL_P1[PS]: ...
+@overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]]) -> SQL_P1[P1]: ...
+@overload
+def sql(stmt: SQLExpression, *, args: type[PS], resultset: type[RS]) -> SQL_P1_R1[PS, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]], resultset: type[tuple[R1]]) -> SQL_P1_R1[P1, R1]: ...
 @overload
+def sql(stmt: SQLExpression, *, args: type[PS], resultset: type[tuple[R1, R2]]) -> SQL_P1_R2[PS, R1, R2]: ...
+@overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]], resultset: type[tuple[R1, R2]]) -> SQL_P1_R2[P1, R1, R2]: ...
+@overload
+def sql(stmt: SQLExpression, *, args: type[PS], resultset: type[tuple[R1, R2, R3]]) -> SQL_P1_R3[PS, R1, R2, R3]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]], resultset: type[tuple[R1, R2, R3]]) -> SQL_P1_R3[P1, R1, R2, R3]: ...
 @overload
+def sql(stmt: SQLExpression, *, args: type[PS], resultset: type[tuple[R1, R2, R3, R4]]) -> SQL_P1_R4[PS, R1, R2, R3, R4]: ...
+@overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]], resultset: type[tuple[R1, R2, R3, R4]]) -> SQL_P1_R4[P1, R1, R2, R3, R4]: ...
+@overload
+def sql(stmt: SQLExpression, *, args: type[PS], resultset: type[tuple[R1, R2, R3, R4, R5]]) -> SQL_P1_R5[PS, R1, R2, R3, R4, R5]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]], resultset: type[tuple[R1, R2, R3, R4, R5]]) -> SQL_P1_R5[P1, R1, R2, R3, R4, R5]: ...
 @overload
+def sql(stmt: SQLExpression, *, args: type[PS], resultset: type[tuple[R1, R2, R3, R4, R5, R6]]) -> SQL_P1_R6[PS, R1, R2, R3, R4, R5, R6]: ...
+@overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]], resultset: type[tuple[R1, R2, R3, R4, R5, R6]]) -> SQL_P1_R6[P1, R1, R2, R3, R4, R5, R6]: ...
 @overload
+def sql(stmt: SQLExpression, *, args: type[PS], resultset: type[tuple[R1, R2, R3, R4, R5, R6, R7]]) -> SQL_P1_R7[PS, R1, R2, R3, R4, R5, R6, R7]: ...
+@overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]], resultset: type[tuple[R1, R2, R3, R4, R5, R6, R7]]) -> SQL_P1_R7[P1, R1, R2, R3, R4, R5, R6, R7]: ...
+@overload
+def sql(stmt: SQLExpression, *, args: type[PS], resultset: type[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]) -> SQL_P1_R8[PS, R1, R2, R3, R4, R5, R6, R7, R8]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]], resultset: type[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]) -> SQL_P1_R8[P1, R1, R2, R3, R4, R5, R6, R7, R8]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2]]) -> SQL_P2[P1, P2]: ...
+@overload
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2]], resultset: type[RS]) -> SQL_P2_R1[P1, P2, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2]], resultset: type[tuple[R1]]) -> SQL_P2_R1[P1, P2, R1]: ...
 @overload
@@ -1091,6 +1266,8 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2]], resultset: type[tuple
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]]) -> SQL_P3[P1, P2, P3]: ...
 @overload
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]], resultset: type[RS]) -> SQL_P3_R1[P1, P2, P3, RS]: ...
+@overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]], resultset: type[tuple[R1]]) -> SQL_P3_R1[P1, P2, P3, R1]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]], resultset: type[tuple[R1, R2]]) -> SQL_P3_R2[P1, P2, P3, R1, R2]: ...
@@ -1108,6 +1285,8 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]], resultset: type[t
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]], resultset: type[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]) -> SQL_P3_R8[P1, P2, P3, R1, R2, R3, R4, R5, R6, R7, R8]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4]]) -> SQL_P4[P1, P2, P3, P4]: ...
+@overload
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4]], resultset: type[RS]) -> SQL_P4_R1[P1, P2, P3, P4, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4]], resultset: type[tuple[R1]]) -> SQL_P4_R1[P1, P2, P3, P4, R1]: ...
 @overload
@@ -1127,6 +1306,8 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4]], resultset: ty
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]]) -> SQL_P5[P1, P2, P3, P4, P5]: ...
 @overload
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]], resultset: type[RS]) -> SQL_P5_R1[P1, P2, P3, P4, P5, RS]: ...
+@overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]], resultset: type[tuple[R1]]) -> SQL_P5_R1[P1, P2, P3, P4, P5, R1]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]], resultset: type[tuple[R1, R2]]) -> SQL_P5_R2[P1, P2, P3, P4, P5, R1, R2]: ...
@@ -1144,6 +1325,8 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]], resultset
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]], resultset: type[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]) -> SQL_P5_R8[P1, P2, P3, P4, P5, R1, R2, R3, R4, R5, R6, R7, R8]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6]]) -> SQL_P6[P1, P2, P3, P4, P5, P6]: ...
+@overload
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6]], resultset: type[RS]) -> SQL_P6_R1[P1, P2, P3, P4, P5, P6, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6]], resultset: type[tuple[R1]]) -> SQL_P6_R1[P1, P2, P3, P4, P5, P6, R1]: ...
 @overload
@@ -1163,6 +1346,8 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6]], resul
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]]) -> SQL_P7[P1, P2, P3, P4, P5, P6, P7]: ...
 @overload
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]], resultset: type[RS]) -> SQL_P7_R1[P1, P2, P3, P4, P5, P6, P7, RS]: ...
+@overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]], resultset: type[tuple[R1]]) -> SQL_P7_R1[P1, P2, P3, P4, P5, P6, P7, R1]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]], resultset: type[tuple[R1, R2]]) -> SQL_P7_R2[P1, P2, P3, P4, P5, P6, P7, R1, R2]: ...
@@ -1180,6 +1365,8 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]], r
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]], resultset: type[tuple[R1, R2, R3, R4, R5, R6, R7, R8]]) -> SQL_P7_R8[P1, P2, P3, P4, P5, P6, P7, R1, R2, R3, R4, R5, R6, R7, R8]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7, P8]]) -> SQL_P8[P1, P2, P3, P4, P5, P6, P7, P8]: ...
+@overload
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7, P8]], resultset: type[RS]) -> SQL_P8_R1[P1, P2, P3, P4, P5, P6, P7, P8, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7, P8]], resultset: type[tuple[R1]]) -> SQL_P8_R1[P1, P2, P3, P4, P5, P6, P7, P8, R1]: ...
 @overload
@@ -1204,15 +1391,15 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7, P8]
 def sql(
     stmt: SQLExpression,
     *,
-    args: type[tuple[Any, ...]] | None = None,
-    resultset: type[tuple[Any, ...]] | None = None,
+    args: type[Any] | None = None,
+    resultset: type[Any] | None = None,
 ) -> _SQL:
     """
     Creates a SQL statement with associated type information.
 
     :param stmt: SQL statement as a string or template.
-    :param args: Type signature for input parameters.
-    :param resultset: Type signature for output data.
+    :param args: Type signature for input parameters. Use the type for a single parameter (e.g. `int`) or `tuple[...]` for multiple parameters.
+    :param resultset: Type signature for output data. Use the type for a single parameter (e.g. `int`) or `tuple[...]` for multiple parameters.
     """
 
     if sys.version_info >= (3, 14):

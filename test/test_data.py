@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 import asyncpg
 
-from asyncpg_typed import JsonType, sql
+from asyncpg_typed import sql
 
 
 class RollbackException(RuntimeError):
@@ -181,7 +181,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             INSERT INTO composite_types (uuid_value, json_value, jsonb_value)
             VALUES ($1, $2, $3);
             """,
-            args=tuple[UUID, JsonType | None, JsonType],
+            args=tuple[UUID, str | None, str],
         )
 
         select_sql = sql(
@@ -191,7 +191,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             FROM composite_types
             ORDER BY id;
             """,
-            resultset=tuple[UUID, JsonType | None, JsonType],
+            resultset=tuple[UUID, str | None, str],
         )
 
         async with get_connection() as conn:
@@ -247,17 +247,35 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             resultset=tuple[bool, int, str | None],
         )
 
+        insert_returning_sql = sql(
+            """
+            --sql
+            INSERT INTO sample_data (boolean_value, integer_value, string_value)
+            VALUES ($1, $2, $3)
+            RETURNING id;
+            """,
+            args=tuple[bool, int, str | None],
+            resultset=int,
+        )
+
         count_sql = sql(
             """
             --sql
             SELECT COUNT(*) FROM sample_data;
             """,
-            resultset=tuple[int],  # type: ignore[arg-type, var-annotated]
+            resultset=int,
+        )
+
+        count_where_sql = sql(
+            """
+            --sql
+            SELECT COUNT(*) FROM sample_data WHERE integer_value > $1;
+            """,
+            args=int,
+            resultset=int,
         )
 
         async with get_connection() as conn:
-            await conn.execute("SELECT 1")
-
             await create_sql.execute(conn)
             await insert_sql.execute(conn, False, 23, "twenty-three")
             await insert_sql.executemany(conn, [(False, 1, "one"), (True, 2, "two"), (False, 3, "three"), (True, 64, None)])
@@ -273,10 +291,18 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await select_sql.fetch(conn), [(False, 1, "one"), (True, 2, "two"), (False, 3, "three"), (False, 23, "twenty-three"), (True, 64, None)])
             self.assertEqual(await select_where_sql.fetch(conn, False, 2), [(False, 3, "three"), (False, 23, "twenty-three")])
             self.assertEqual(await select_where_sql.fetchrow(conn, True, 32), (True, 64, None))
+            rows = await insert_returning_sql.fetchmany(conn, [(True, 4, "four"), (False, 5, "five"), (True, 6, "six")])
+            self.assertEqual(len(rows), 3)
+            for row in rows:
+                self.assertEqual(len(row), 1)
 
             count = await count_sql.fetchval(conn)
             self.assertIsInstance(count, int)
-            self.assertEqual(count, 5)
+            self.assertEqual(count, 8)
+
+            count_where = await count_where_sql.fetchval(conn, 1)
+            self.assertIsInstance(count_where, int)
+            self.assertEqual(count_where, 7)
 
 
 if __name__ == "__main__":
