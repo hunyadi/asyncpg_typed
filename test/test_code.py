@@ -10,7 +10,7 @@ from io import StringIO
 from pathlib import Path
 from typing import TextIO
 
-from asyncpg_typed import DATA_TYPES, NUM_ARGS, NUM_RESULTS
+from asyncpg_typed import DATA_TYPES, NUM_ARGS
 
 
 def _args_and_results(p: int, r: int, s: bool = False) -> str:
@@ -19,7 +19,8 @@ def _args_and_results(p: int, r: int, s: bool = False) -> str:
 
     * Inbound types start with `P`.
     * Outbound types start with `R`.
-    * `S` denotes a singular type.
+    * Suffix `S` denotes a singular type.
+    * Suffix `X` denotes any number of items (starting at 0).
     * Numbers indicate position in a tuple type (starting at 1).
 
     :param p: Number of inbound parameters.
@@ -35,7 +36,11 @@ def _args_and_results(p: int, r: int, s: bool = False) -> str:
     if s and r == 1:
         items.append("RS")
     else:
-        items.extend(f"R{k + 1}" for k in range(r))
+        if r > 0:
+            items.append("R1")
+        if r > 1:
+            items.append("R2")
+            items.append("Unpack[RX]")
     if items:
         return f"[{', '.join(items)}]"
     else:
@@ -69,10 +74,6 @@ def _params(p: int) -> str:
         return ""
 
 
-def _type_spec(p: int, r: int, s: bool = False) -> str:
-    return _args_and_results(p, r, s)
-
-
 def _param_spec(p: int, r: int, s: bool = False) -> str:
     """
     Emits formal parameters for the inbound (`args`) and outbound (`resultset`) parameter type specification.
@@ -93,37 +94,35 @@ def _param_spec(p: int, r: int, s: bool = False) -> str:
         return ""
 
 
-def _write_function(out: TextIO, p: int, r: int, s: bool, *, use_modern_generic_syntax: bool = False) -> None:
-    if r > 0:
-        class_type = f"SQL_P{p}_R{r}"
+def _class(p: int, r: int) -> str:
+    if r > 1:
+        return f"SQL_P{p}_RX"
+    elif r == 1:
+        return f"SQL_P{p}_RS"
     else:
-        class_type = f"SQL_P{p}"
+        return f"SQL_P{p}"
 
+
+def _write_function(out: TextIO, p: int, r: int, s: bool) -> None:
     print(r"@overload", file=out)
-    if use_modern_generic_syntax:
-        print(f"def sql{_type_spec(p, r, s)}(stmt: SQLExpression{_param_spec(p, r, s)}) -> {class_type}{_args_and_results(p, r, s)}: ...", file=out)
-    else:
-        print(f"def sql(stmt: SQLExpression{_param_spec(p, r, s)}) -> {class_type}{_args_and_results(p, r, s)}: ...", file=out)
+    print(f"def sql(stmt: SQLExpression{_param_spec(p, r, s)}) -> {_class(p, r)}{_args_and_results(p, r, s)}: ...", file=out)
 
 
-def write_code(out: TextIO, *, use_modern_generic_syntax: bool = False) -> None:
-    if not use_modern_generic_syntax:
-        for p in range(1, NUM_ARGS + 1):
-            print(f'P{p} = TypeVar("P{p}")', file=out)
+def write_code(out: TextIO) -> None:
+    data_types_list = ", ".join(f"{data_type.__name__}, {data_type.__name__} | None" for data_type in DATA_TYPES)
+    print(f'PS = TypeVar("PS", {data_types_list})', file=out)
 
-        for r in range(1, NUM_RESULTS + 1):
-            print(f'R{r} = TypeVar("R{r}")', file=out)
+    for p in range(1, NUM_ARGS + 1):
+        print(f'P{p} = TypeVar("P{p}")', file=out)
 
-        data_types_list = ", ".join(f"{data_type.__name__}, {data_type.__name__} | None" for data_type in DATA_TYPES)
-        print(f'PS = TypeVar("PS", {data_types_list})', file=out)
-        print(f'RS = TypeVar("RS", {data_types_list})', file=out)
+    print(f'RS = TypeVar("RS", {data_types_list})', file=out)
+    print('R1 = TypeVar("R1")', file=out)
+    print('R2 = TypeVar("R2")', file=out)
+    print('RX = TypeVarTuple("RX")', file=out)
 
     for p in range(NUM_ARGS + 1):
         if p > 0:
-            if use_modern_generic_syntax:
-                print(f"class SQL_P{p}{_args(p)}(_SQL):", file=out)
-            else:
-                print(f"class SQL_P{p}(Generic{_args(p)}, _SQL):", file=out)
+            print(f"class {_class(p, 0)}(Generic{_args(p)}, _SQL):", file=out)
 
             print(r"    @abstractmethod", file=out)
             print(f"    async def execute(self, connection: Connection{_params(p)}) -> None: ...", file=out)
@@ -134,11 +133,8 @@ def write_code(out: TextIO, *, use_modern_generic_syntax: bool = False) -> None:
             print(r"    @abstractmethod", file=out)
             print(r"    async def execute(self, connection: Connection) -> None: ...", file=out)
 
-        for r in range(1, NUM_RESULTS + 1):
-            if use_modern_generic_syntax:
-                print(f"class SQL_P{p}_R{r}{_args_and_results(p, r)}(SQL_P{p}{_args(p)}):", file=out)
-            else:
-                print(f"class SQL_P{p}_R{r}(Generic{_args_and_results(p, r)}, SQL_P{p}{_args(p)}):", file=out)
+        for r in range(1, 3):
+            print(f"class {_class(p, r)}(Generic{_args_and_results(p, r)}, {_class(p, 0)}{_args(p)}):", file=out)
 
             print(r"    @abstractmethod", file=out)
             print(f"    async def fetch(self, connection: Connection{_params(p)}) -> list[tuple{_results(r)}]: ...", file=out)
@@ -146,6 +142,7 @@ def write_code(out: TextIO, *, use_modern_generic_syntax: bool = False) -> None:
             if p > 0:
                 print(r"    @abstractmethod", file=out)
                 print(f"    async def fetchmany(self, connection: Connection, args: Iterable[tuple{_args(p)}]) -> list[tuple{_results(r)}]: ...", file=out)
+
             print(r"    @abstractmethod", file=out)
             print(f"    async def fetchrow(self, connection: Connection{_params(p)}) -> tuple{_results(r)} | None: ...", file=out)
 
@@ -154,7 +151,7 @@ def write_code(out: TextIO, *, use_modern_generic_syntax: bool = False) -> None:
                 print(f"    async def fetchval(self, connection: Connection{_params(p)}) -> R{r}: ...", file=out)
 
     for p in range(NUM_ARGS + 1):
-        for r in range(NUM_RESULTS + 1):
+        for r in range(3):
             if p == 1 or r == 1:
                 _write_function(out, p, r, True)
             _write_function(out, p, r, False)

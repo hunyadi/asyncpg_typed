@@ -32,7 +32,8 @@ classifiers = [
     "Typing :: Typed"
 ]
 dependencies = [
-    "asyncpg >= 0.31"
+    "asyncpg >= 0.31",
+    "typing-extensions >= 4.15; python_version < '3.11'"
 ]
 dynamic = ["version"]
 

@@ -6,12 +6,16 @@ Type-safe queries for asyncpg.
 
 # This test suite requires Python 3.14 or later
 
+import sys
 import unittest
 from contextlib import asynccontextmanager
 
 import asyncpg
 
 from asyncpg_typed import sql
+
+if sys.version_info >= (3, 14):
+    from string.templatelib import Interpolation, Template
 
 
 @asynccontextmanager
@@ -23,6 +27,7 @@ async def get_connection():
         await conn.close()
 
 
+@unittest.skipUnless(sys.version_info >= (3, 14), "requires Python 3.14 or later")
 class TestTemplate(unittest.IsolatedAsyncioTestCase):
     async def test_sql(self) -> None:
         create_sql = sql(
@@ -39,22 +44,14 @@ class TestTemplate(unittest.IsolatedAsyncioTestCase):
         )
 
         insert_sql = sql(
-            t"""
-            --sql
-            INSERT INTO sample_data (boolean_value, integer_value, string_value)
-            VALUES ({1}, {2}, {3});
-            """,
+            # use template object (as opposed to t-string) to ensure syntax compatibility with earlier versions of Python
+            Template("INSERT INTO sample_data (boolean_value, integer_value, string_value) VALUES (", Interpolation(1), ", ", Interpolation(2), ", ", Interpolation(3), ");"),
             args=tuple[bool, int, str | None],
         )
 
         select_where_sql = sql(
-            t"""
-            --sql
-            SELECT boolean_value, integer_value, string_value
-            FROM sample_data
-            WHERE boolean_value = {1} AND integer_value > {2}
-            ORDER BY integer_value;
-            """,
+            # use template object (as opposed to t-string) to ensure syntax compatibility with earlier versions of Python
+            Template("SELECT boolean_value, integer_value, string_value FROM sample_data WHERE boolean_value = ", Interpolation(1), " AND integer_value > ", Interpolation(2), " ORDER BY integer_value;"),
             args=tuple[bool, int],
             resultset=tuple[bool, int, str | None],
         )

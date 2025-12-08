@@ -19,7 +19,9 @@
         "asyncpg",
         "bpchar",
         "bytea",
+        "errorlevel",
         "executemany",
+        "fetchmany",
         "fetchrow",
         "fetchval",
         "halfvec",
@@ -27,8 +29,12 @@
         "Levente",
         "mypy",
         "resultset",
+        "setlocal",
         "setuptools",
+        "smallint",
         "templatelib",
-        "timestamptz"
+        "timestamptz",
+        "timetz",
+        "varchar"
     ]
 }

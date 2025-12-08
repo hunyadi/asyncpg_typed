@@ -9,6 +9,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from random import randint, sample
+from types import UnionType
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -303,6 +306,50 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             count_where = await count_where_sql.fetchval(conn, 1)
             self.assertIsInstance(count_where, int)
             self.assertEqual(count_where, 7)
+
+    async def test_multiple(self) -> None:
+        passthrough_sql = sql(
+            """
+            --sql
+            SELECT
+                $1::int, $2::int, $3::int, $4::int, $5::int, $6::int, $7::int, $8::int,
+                $1::int, $2::int, $3::int, $4::int, $5::int, $6::int, $7::int, $8::int;
+            """,
+            args=tuple[int, int, int, int, int, int, int, int],
+            resultset=tuple[int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int],
+        )
+
+        async with get_connection() as conn:
+            numbers = [randint(-2_147_483_648, 2_147_483_647) for _ in range(8)]
+            rows = await passthrough_sql.fetch(conn, *numbers)
+            self.assertEqual(rows, [(*numbers, *numbers)])
+
+    async def test_nullable(self) -> None:
+        def nullif(a: int, b: int) -> str:
+            return f"NULLIF(${a + 1}::int, ${b + 1}::int)"
+
+        args = sample(range(-2_147_483_648, 2_147_483_647), 8)
+
+        async with get_connection() as conn:
+            for index in range(8):
+                params: list[type[Any] | UnionType] = [int, int, int, int, int, int, int, int]
+                params[index] = int | None
+
+                passthrough_sql = sql(  # pyright: ignore[reportUnknownVariableType]
+                    f"""
+                    --sql
+                    SELECT
+                        {nullif(0, index)}, {nullif(1, index)}, {nullif(2, index)}, {nullif(3, index)},
+                        {nullif(4, index)}, {nullif(5, index)}, {nullif(6, index)}, {nullif(7, index)};
+                    """,
+                    args=tuple[int, int, int, int, int, int, int, int],
+                    resultset=tuple[tuple(params)],  # type: ignore[misc]
+                )  # type: ignore[call-overload]
+
+                rows = await passthrough_sql.fetch(conn, *args)
+                resultset: list[int | None] = [i for i in args]
+                resultset[index] = None
+                self.assertEqual(rows, [tuple(resultset)])
 
 
 if __name__ == "__main__":

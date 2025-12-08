@@ -4,6 +4,7 @@
 
 This Python library provides "compile-time" validation for SQL queries that linters and type checkers can enforce. By creating a generic `SQL` object and associating input and output type information with the query, the signatures of `execute` and `fetch` reveal the exact expected and returned types.
 
+
 ## Motivating example
 
 ```python
@@ -36,6 +37,112 @@ try:
 finally:
     await conn.close()
 ```
+
+
+## Syntax
+
+### Creating a SQL object
+
+Instantiate a SQL object with the `sql` function:
+
+```python
+def sql(
+    stmt: str | string.templatelib.Template,
+    *,
+    args: None | type[P1] | type[tuple[P1, P2]] | type[tuple[P1, P2, P3]] | ... = None,
+    resultset: None | type[R1] | type[tuple[R1, R2]] | type[tuple[R1, R2, R3]] | ... = None
+) -> _SQL: ...
+```
+
+The parameter `stmt` represents a SQL expression, either as a string (including an *f-string*) or a template (i.e. a *t-string*).
+
+If the expression is a string, it can have PostgreSQL parameter placeholders such as `$1`, `$2` or `$3`:
+
+```python
+f"INSERT INTO table_name (col_1, col_2, col_3) VALUES ($1, $2, $3);"
+```
+
+If the expression is a *t-string*, it can have replacement fields that evaluate to integers:
+
+```python
+t"INSERT INTO table_name (col_1, col_2, col_3) VALUES ({1}, {2}, {3});"
+```
+
+The parameters `args` and `resultset` take a series type `P` or `R`, which may be any of the following:
+
+* (required) simple type
+* optional simple type (`T | None`)
+* `tuple` of several (required or optional) simple types.
+
+Simple types include:
+
+* `bool`
+* `int`
+* `float`
+* `decimal.Decimal`
+* `datetime.date`
+* `datetime.time`
+* `datetime.datetime`
+* `str`
+* `bytes`
+* `uuid.UUID`
+
+Types are grouped together with `tuple`:
+
+```python
+tuple[bool, int, str | None]
+```
+
+Passing a simple type directly (e.g. `type[T]`) is for convenience, and is equivalent to passing a one-element tuple of the same simple type (i.e. `type[tuple[T]]`).
+
+The number of types in `args` must correspond to the number of query parameters. (This is validated on calling `sql(...)` for the *t-string* syntax.) The number of types in `resultset` must correspond to the number of columns returned by the query.
+
+Both `args` and `resultset` types must be compatible with their corresponding PostgreSQL query parameter types and resultset column types, respectively. The following table shows the mapping between PostgreSQL and Python types.
+
+| PostgreSQL type   | Python type        |
+| ----------------- | ------------------ |
+| `bool`            | `bool`             |
+| `smallint`        | `int`              |
+| `integer`         | `int`              |
+| `bigint`          | `int`              |
+| `real`/`float4`   | `float`            |
+| `double`/`float8` | `float`            |
+| `decimal`         | `Decimal`          |
+| `numeric`         | `Decimal`          |
+| `date`            | `date`             |
+| `time`            | `time` (naive)     |
+| `timetz`          | `time` (tz)        |
+| `timestamp`       | `datetime` (naive) |
+| `timestamptz`     | `datetime` (tz)    |
+| `char(N)`         | `str`              |
+| `varchar(N)`      | `str`              |
+| `text`            | `str`              |
+| `bytea`           | `bytes`            |
+| `json`            | `str`              |
+| `jsonb`           | `str`              |
+| `uuid`            | `UUID`             |
+
+### Using a SQL object
+
+The function `sql` returns an object that derives from the base class `_SQL` and is specific to the number and types of parameters passed in `args` and `resultset`.
+
+The following functions are available on SQL objects:
+
+```python
+async def execute(self, connection: Connection, *args: *P) -> None: ...
+async def executemany(self, connection: Connection, args: Iterable[tuple[*P]]) -> None: ...
+async def fetch(self, connection: Connection, *args: *P) -> list[tuple[*R]]: ...
+async def fetchmany(self, connection: Connection, args: Iterable[tuple[*P]]) -> list[tuple[*R]]: ...
+async def fetchrow(self, connection: Connection, *args: *P) -> tuple[*R] | None: ...
+async def fetchval(self, connection: Connection, *args: *P) -> R1: ...
+```
+
+`Connection` may be an `asyncpg.Connection` or an `asyncpg.pool.PoolConnectionProxy` acquired from a connection pool.
+
+`*P` and `*R` denote several types (a type pack) corresponding to those listed in `args` and `resultset`, respectively.
+
+Only those functions are prompted on code completion that make sense in the context of the given number of input and output arguments. Specifically, `fetchval` is available only for a single type passed to `resultset`, and `executemany` and `fetchmany` are available only if the query takes (one or more) parameters.
+
 
 ## Run-time behavior
 
