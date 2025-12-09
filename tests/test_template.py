@@ -8,23 +8,12 @@ Type-safe queries for asyncpg.
 
 import sys
 import unittest
-from contextlib import asynccontextmanager
-
-import asyncpg
 
 from asyncpg_typed import sql
+from tests.connection import get_connection
 
 if sys.version_info >= (3, 14):
     from string.templatelib import Interpolation, Template
-
-
-@asynccontextmanager
-async def get_connection():
-    conn = await asyncpg.connect(host="localhost", port=5432, user="postgres", password="postgres")
-    try:
-        yield conn
-    finally:
-        await conn.close()
 
 
 @unittest.skipUnless(sys.version_info >= (3, 14), "requires Python 3.14 or later")
@@ -32,7 +21,7 @@ class TestTemplate(unittest.IsolatedAsyncioTestCase):
     async def test_sql(self) -> None:
         create_sql = sql(
             """
-            ---sql
+            --sql
             CREATE TEMPORARY TABLE sample_data(
                 id bigint GENERATED ALWAYS AS IDENTITY,
                 boolean_value bool NOT NULL,

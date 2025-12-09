@@ -39,7 +39,7 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 vector = [
-    "asyncpg_vector >= 0.1"
+    "asyncpg-vector >= 0.1"
 ]
 dev = [
     "asyncpg-stubs >= 0.31",

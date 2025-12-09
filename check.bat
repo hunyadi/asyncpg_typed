@@ -9,7 +9,7 @@ set PYTHON_314="C:\Program Files\Python314\python.exe"
 
 %PYTHON_314% -m mypy asyncpg_typed
 if errorlevel 1 goto error
-%PYTHON_314% -m mypy test
+%PYTHON_314% -m mypy tests
 if errorlevel 1 goto error
 
 if exist %PYTHON_310% %PYTHON_310% -m unittest discover

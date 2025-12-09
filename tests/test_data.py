@@ -4,9 +4,9 @@ Type-safe queries for asyncpg.
 :see: https://github.com/hunyadi/asyncpg_typed
 """
 
+import enum
+import sys
 import unittest
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from random import randint, sample
@@ -14,29 +14,31 @@ from types import UnionType
 from typing import Any
 from uuid import UUID, uuid4
 
-import asyncpg
-
 from asyncpg_typed import sql
+from tests.connection import get_connection
 
 
 class RollbackException(RuntimeError):
     pass
 
 
-@asynccontextmanager
-async def get_connection() -> AsyncIterator[asyncpg.Connection]:
-    conn = await asyncpg.connect(host="localhost", port=5432, user="postgres", password="postgres")
-    try:
-        yield conn
-    finally:
-        await conn.close()
+if sys.version_info < (3, 11):
+
+    class State(str, enum.Enum):
+        ACTIVE = "active"
+        INACTIVE = "inactive"
+else:
+
+    class State(enum.StrEnum):
+        ACTIVE = "active"
+        INACTIVE = "inactive"
 
 
 class TestDataTypes(unittest.IsolatedAsyncioTestCase):
     async def test_numeric_types(self) -> None:
         create_sql = sql(
             """
-            ---sql
+            --sql
             CREATE TEMPORARY TABLE numeric_types(
                 id bigint GENERATED ALWAYS AS IDENTITY,
                 boolean_value boolean NOT NULL,
@@ -80,7 +82,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
     async def test_datetime_types(self) -> None:
         create_sql = sql(
             """
-            ---sql
+            --sql
             CREATE TEMPORARY TABLE datetime_types(
                 id bigint GENERATED ALWAYS AS IDENTITY,
                 date_value date NOT NULL,
@@ -127,7 +129,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
     async def test_sequence_types(self) -> None:
         create_sql = sql(
             """
-            ---sql
+            --sql
             CREATE TEMPORARY TABLE sequence_types(
                 id bigint GENERATED ALWAYS AS IDENTITY,
                 bytes_value bytea NOT NULL,
@@ -167,7 +169,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
     async def test_composite_type(self) -> None:
         create_sql = sql(
             """
-            ---sql
+            --sql
             CREATE TEMPORARY TABLE composite_types(
                 id bigint GENERATED ALWAYS AS IDENTITY,
                 uuid_value uuid NOT NULL,
@@ -204,10 +206,79 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             await insert_sql.executemany(conn, [record1, record2])
             self.assertEqual(await select_sql.fetch(conn), [record1, record2])
 
+    async def test_enum_type(self) -> None:
+        create_sql = sql(
+            """
+            --sql
+            DO $$ BEGIN
+                CREATE TYPE state AS ENUM ('active', 'inactive');
+            EXCEPTION
+                WHEN duplicate_object THEN null;
+            END $$;
+
+            --sql
+            CREATE TEMPORARY TABLE enum_types(
+                id bigint GENERATED ALWAYS AS IDENTITY,
+                enum_value state NOT NULL,
+                CONSTRAINT pk_sample_data PRIMARY KEY (id)
+            );
+            """
+        )
+
+        insert_sql = sql(
+            """
+            --sql
+            INSERT INTO enum_types (enum_value)
+            VALUES ($1);
+            """,
+            args=State,
+        )
+
+        select_sql = sql(
+            """
+            --sql
+            SELECT enum_value, enum_value
+            FROM enum_types
+            ORDER BY id;
+            """,
+            resultset=tuple[State, State | None],
+        )
+
+        value_sql = sql(
+            """
+            --sql
+            SELECT enum_value
+            FROM enum_types
+            ORDER BY id;
+            """,
+            resultset=State,
+        )
+
+        async with get_connection() as conn:
+            await create_sql.execute(conn)
+            await insert_sql.executemany(conn, [(State.ACTIVE,), (State.INACTIVE,)])
+
+            rows = await select_sql.fetch(conn)
+            for row in rows:
+                for column in row:
+                    self.assertIsInstance(column, State)
+            self.assertEqual(rows, [(State.ACTIVE, State.ACTIVE), (State.INACTIVE, State.INACTIVE)])
+
+            record = await select_sql.fetchrow(conn)
+            self.assertIsNotNone(record)
+            if record:
+                for column in record:
+                    self.assertIsInstance(column, State)
+                self.assertEqual(record, (State.ACTIVE, State.ACTIVE))
+
+            value = await value_sql.fetchval(conn)
+            self.assertIsInstance(value, State)
+            self.assertEqual(value, State.ACTIVE)
+
     async def test_sql(self) -> None:
         create_sql = sql(
             """
-            ---sql
+            --sql
             CREATE TEMPORARY TABLE sample_data(
                 id bigint GENERATED ALWAYS AS IDENTITY,
                 boolean_value bool NOT NULL,

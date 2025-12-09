@@ -5,33 +5,23 @@ Type-safe queries for asyncpg.
 """
 
 import unittest
-from contextlib import asynccontextmanager
 from random import random
 
-import asyncpg
 from asyncpg_vector import HalfVector, Vector, register_vector
 
 from asyncpg_typed import sql
+from tests.connection import get_connection
 
 
 class RollbackException(RuntimeError):
     pass
 
 
-@asynccontextmanager
-async def get_connection():
-    conn = await asyncpg.connect(host="localhost", port=5432, user="postgres", password="postgres")
-    try:
-        yield conn
-    finally:
-        await conn.close()
-
-
 class TestConnection(unittest.IsolatedAsyncioTestCase):
     async def test_vector_type(self) -> None:
         create_sql = sql(
             """
-            ---sql
+            --sql
             CREATE EXTENSION IF NOT EXISTS vector;
 
             --sql

@@ -59,7 +59,7 @@ The parameter `stmt` represents a SQL expression, either as a string (including 
 If the expression is a string, it can have PostgreSQL parameter placeholders such as `$1`, `$2` or `$3`:
 
 ```python
-f"INSERT INTO table_name (col_1, col_2, col_3) VALUES ($1, $2, $3);"
+"INSERT INTO table_name (col_1, col_2, col_3) VALUES ($1, $2, $3);"
 ```
 
 If the expression is a *t-string*, it can have replacement fields that evaluate to integers:

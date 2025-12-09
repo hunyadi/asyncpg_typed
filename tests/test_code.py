@@ -109,13 +109,17 @@ def _write_function(out: TextIO, p: int, r: int, s: bool) -> None:
 
 
 def write_code(out: TextIO) -> None:
-    data_types_list = ", ".join(f"{data_type.__name__}, {data_type.__name__} | None" for data_type in DATA_TYPES)
-    print(f'PS = TypeVar("PS", {data_types_list})', file=out)
+    data_types: list[str] = []
+    for data_type in DATA_TYPES:
+        data_types.append(f"{data_type.__name__}")
+        data_types.append(f"{data_type.__name__} | None")
+    bound = ", ".join(data_types)
+    print(f'PS = TypeVar("PS", {bound})', file=out)
 
     for p in range(1, NUM_ARGS + 1):
         print(f'P{p} = TypeVar("P{p}")', file=out)
 
-    print(f'RS = TypeVar("RS", {data_types_list})', file=out)
+    print(f'RS = TypeVar("RS", {bound})', file=out)
     print('R1 = TypeVar("R1")', file=out)
     print('R2 = TypeVar("R2")', file=out)
     print('RX = TypeVarTuple("RX")', file=out)

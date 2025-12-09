@@ -11,6 +11,7 @@ __license__ = "MIT"
 __maintainer__ = "Levente Hunyadi"
 __status__ = "Production"
 
+import enum
 import sys
 import typing
 from abc import abstractmethod
@@ -38,9 +39,29 @@ DATA_TYPES: list[type[Any]] = [bool, int, float, Decimal, date, time, datetime, 
 NUM_ARGS = 8
 
 
+if sys.version_info >= (3, 11):
+
+    def is_enum_type(typ: object) -> bool:
+        """
+        `True` if the specified type is an enumeration type.
+        """
+
+        return isinstance(typ, enum.EnumType)
+
+else:
+
+    def is_enum_type(typ: object) -> bool:
+        """
+        `True` if the specified type is an enumeration type.
+        """
+
+        # use an explicit isinstance(..., type) check to filter out special forms like generics
+        return isinstance(typ, type) and issubclass(typ, enum.Enum)
+
+
 def is_union_type(tp: Any) -> bool:
     """
-    Returns `True` if `tp` is a union type such as `A | B` or `Union[A, B]`.
+    `True` if `tp` is a union type such as `A | B` or `Union[A, B]`.
     """
 
     origin = get_origin(tp)
@@ -49,7 +70,7 @@ def is_union_type(tp: Any) -> bool:
 
 def is_optional_type(tp: Any) -> bool:
     """
-    Returns `True` if `tp` is an optional type such as `T | None`, `Optional[T]` or `Union[T, None]`.
+    `True` if `tp` is an optional type such as `T | None`, `Optional[T]` or `Union[T, None]`.
     """
 
     return is_union_type(tp) and any(a is type(None) for a in get_args(tp))
@@ -57,7 +78,7 @@ def is_optional_type(tp: Any) -> bool:
 
 def is_standard_type(tp: Any) -> bool:
     """
-    Returns `True` if the type represents a built-in or a well-known standard type.
+    `True` if the type represents a built-in or a well-known standard type.
     """
 
     return tp.__module__ == "builtins" or tp.__module__ == UnionType.__module__
@@ -115,21 +136,20 @@ _name_to_type: dict[str, Any] = {
 }
 
 
-def check_data_type(name: str, data_type: type[Any]) -> bool:
+def check_data_type(schema: str, name: str, data_type: type[Any]) -> bool:
     """
     Verifies if the Python target type can represent the PostgreSQL source type.
     """
 
-    expected_type = _name_to_type.get(name)
-    required_type = get_required_type(data_type)
+    if schema == "pg_catalog":
+        expected_type = _name_to_type.get(name)
+        return expected_type == data_type
+    else:
+        if is_standard_type(data_type):
+            return False
 
-    if expected_type is not None:
-        return expected_type == required_type
-    if is_standard_type(required_type):
-        return False
-
-    # user-defined type registered with `conn.set_type_codec()`
-    return True
+        # user-defined type registered with `conn.set_type_codec()`
+        return True
 
 
 class _SQLPlaceholder:
@@ -152,6 +172,7 @@ class _SQLObject:
     parameter_data_types: tuple[_SQLPlaceholder, ...]
     resultset_data_types: tuple[type[Any], ...]
     required: int
+    cast: int
 
     def __init__(
         self,
@@ -161,25 +182,35 @@ class _SQLObject:
     ) -> None:
         if args is not None:
             if get_origin(args) is tuple:
-                self.parameter_data_types = tuple(_SQLPlaceholder(ordinal, arg) for ordinal, arg in enumerate(get_args(args), start=1))
+                input_data_types = get_args(args)
             else:
-                self.parameter_data_types = (_SQLPlaceholder(1, args),)
+                input_data_types = (args,)
         else:
-            self.parameter_data_types = ()
+            input_data_types = ()
+
+        self.parameter_data_types = tuple(_SQLPlaceholder(ordinal, arg) for ordinal, arg in enumerate(input_data_types, start=1))
 
         if resultset is not None:
             if get_origin(resultset) is tuple:
-                self.resultset_data_types = get_args(resultset)
+                output_data_types = get_args(resultset)
             else:
-                self.resultset_data_types = (resultset,)
+                output_data_types = (resultset,)
         else:
-            self.resultset_data_types = ()
+            output_data_types = ()
+
+        self.resultset_data_types = tuple(get_required_type(data_type) for data_type in output_data_types)
 
         # create a bit-field of required types (1: required; 0: optional)
         required = 0
-        for index, data_type in enumerate(self.resultset_data_types):
+        for index, data_type in enumerate(output_data_types):
             required |= (not is_optional_type(data_type)) << index
         self.required = required
+
+        # create a bit-field of types that require cast/conversion (1: pass to __init__; 0: skip)
+        cast = 0
+        for index, data_type in enumerate(self.resultset_data_types):
+            cast |= is_enum_type(data_type) << index
+        self.cast = cast
 
     def _raise_required_is_none(self, row: tuple[Any, ...], row_index: int | None = None) -> None:
         """
@@ -422,7 +453,7 @@ class _SQLImpl(_SQL):
         stmt = await connection.prepare(self.sql.query())
 
         for attr, data_type in zip(stmt.get_attributes(), self.sql.resultset_data_types, strict=True):
-            if not check_data_type(attr.type.name, data_type):
+            if not check_data_type(attr.type.schema, attr.type.name, data_type):
                 raise TypeError(f"expected: {data_type} in column `{attr.name}`; got: `{attr.type.kind}` of `{attr.type.name}`")
 
         return stmt
@@ -434,35 +465,47 @@ class _SQLImpl(_SQL):
         stmt = await self._prepare(connection)
         await stmt.executemany(args)
 
+    def _cast_fetch(self, rows: list[asyncpg.Record]) -> list[tuple[Any, ...]]:
+        cast = self.sql.cast
+        if cast:
+            data_types = self.sql.resultset_data_types
+            resultset = [tuple((data_types[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(len(row))) for row in rows]
+        else:
+            resultset = [tuple(value for value in row) for row in rows]
+        self.sql.check_rows(resultset)
+        return resultset
+
     async def fetch(self, connection: asyncpg.Connection, *args: Any) -> list[tuple[Any, ...]]:
         stmt = await self._prepare(connection)
         rows = await stmt.fetch(*args)
-        resultset = [tuple(value for value in row) for row in rows]
-        self.sql.check_rows(resultset)
-        return resultset
+        return self._cast_fetch(rows)
 
     async def fetchmany(self, connection: asyncpg.Connection, args: Iterable[Sequence[Any]]) -> list[tuple[Any, ...]]:
         stmt = await self._prepare(connection)
         rows = await stmt.fetchmany(args)  # type: ignore[arg-type, call-arg]  # pyright: ignore[reportCallIssue]
         rows = typing.cast(list[asyncpg.Record], rows)
-        resultset = [tuple(value for value in row) for row in rows]
-        self.sql.check_rows(resultset)
-        return resultset
+        return self._cast_fetch(rows)
 
     async def fetchrow(self, connection: asyncpg.Connection, *args: Any) -> tuple[Any, ...] | None:
         stmt = await self._prepare(connection)
         row = await stmt.fetchrow(*args)
         if row is None:
             return None
-        resultset = tuple(value for value in row)
+        cast = self.sql.cast
+        if cast:
+            data_types = self.sql.resultset_data_types
+            resultset = tuple((data_types[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(len(row)))
+        else:
+            resultset = tuple(value for value in row)
         self.sql.check_row(resultset)
         return resultset
 
     async def fetchval(self, connection: asyncpg.Connection, *args: Any) -> Any:
         stmt = await self._prepare(connection)
         value = await stmt.fetchval(*args)
-        self.sql.check_value(value)
-        return value
+        result = self.sql.resultset_data_types[0](value) if value is not None and self.sql.cast else value
+        self.sql.check_value(result)
+        return result
 
 
 ### START OF AUTO-GENERATED BLOCK ###
