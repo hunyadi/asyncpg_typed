@@ -4,7 +4,7 @@ Type-safe queries for asyncpg.
 :see: https://github.com/hunyadi/asyncpg_typed
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Levente Hunyadi"
 __copyright__ = "Copyright 2025, Levente Hunyadi"
 __license__ = "MIT"
@@ -13,7 +13,6 @@ __status__ = "Production"
 
 import enum
 import sys
-import typing
 from abc import abstractmethod
 from collections.abc import Iterable, Sequence
 from datetime import date, datetime, time
@@ -464,8 +463,7 @@ class _SQLImpl(_SQL):
 
     async def fetchmany(self, connection: asyncpg.Connection, args: Iterable[Sequence[Any]]) -> list[tuple[Any, ...]]:
         stmt = await self._prepare(connection)
-        rows = await stmt.fetchmany(args)  # type: ignore[arg-type, call-arg]  # pyright: ignore[reportCallIssue]
-        rows = typing.cast(list[asyncpg.Record], rows)
+        rows = await stmt.fetchmany(args)
         return self._cast_fetch(rows)
 
     async def fetchrow(self, connection: asyncpg.Connection, *args: Any) -> tuple[Any, ...] | None:

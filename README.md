@@ -123,7 +123,7 @@ Both `args` and `resultset` types must be compatible with their corresponding Po
 | `json`            | `str`              |
 | `jsonb`           | `str`              |
 | `uuid`            | `UUID`             |
-| enumeration       | `E: StrEnum`          |
+| enumeration       | `E: StrEnum`       |
 
 ### Using a SQL object
 
