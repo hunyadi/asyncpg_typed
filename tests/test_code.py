@@ -10,7 +10,7 @@ from io import StringIO
 from pathlib import Path
 from typing import TextIO
 
-from asyncpg_typed import DATA_TYPES, NUM_ARGS
+from asyncpg_typed import NUM_ARGS
 
 
 def _args_and_results(p: int, r: int, s: bool = False) -> str:
@@ -83,11 +83,11 @@ def _param_spec(p: int, r: int, s: bool = False) -> str:
     if (s and p > 1) or (not s and p > 0):
         params.append(f"args: type[tuple{_args(p)}]")
     elif s and p == 1:
-        params.append("args: type[PS]")
+        params.append("arg: type[PS]")
     if (s and r > 1) or (not s and r > 0):
         params.append(f"resultset: type[tuple{_results(r)}]")
     elif s and r == 1:
-        params.append("resultset: type[RS]")
+        params.append("result: type[RS]")
     if len(params) > 1:
         return f", {', '.join(params)}" if params else ""
     else:
@@ -109,17 +109,12 @@ def _write_function(out: TextIO, p: int, r: int, s: bool) -> None:
 
 
 def write_code(out: TextIO) -> None:
-    data_types: list[str] = []
-    for data_type in DATA_TYPES:
-        data_types.append(f"{data_type.__name__}")
-        data_types.append(f"{data_type.__name__} | None")
-    bound = ", ".join(data_types)
-    print(f'PS = TypeVar("PS", {bound})', file=out)
+    print('PS = TypeVar("PS")', file=out)
 
     for p in range(1, NUM_ARGS + 1):
         print(f'P{p} = TypeVar("P{p}")', file=out)
 
-    print(f'RS = TypeVar("RS", {bound})', file=out)
+    print('RS = TypeVar("RS")', file=out)
     print('R1 = TypeVar("R1")', file=out)
     print('R2 = TypeVar("R2")', file=out)
     print('RX = TypeVarTuple("RX")', file=out)

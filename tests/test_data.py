@@ -231,7 +231,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             INSERT INTO enum_types (enum_value)
             VALUES ($1);
             """,
-            args=State,
+            arg=State,
         )
 
         select_sql = sql(
@@ -251,7 +251,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             FROM enum_types
             ORDER BY id;
             """,
-            resultset=State,
+            result=State,
         )
 
         async with get_connection() as conn:
@@ -329,7 +329,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             RETURNING id;
             """,
             args=tuple[bool, int, str | None],
-            resultset=int,
+            result=int,
         )
 
         count_sql = sql(
@@ -337,7 +337,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             --sql
             SELECT COUNT(*) FROM sample_data;
             """,
-            resultset=int,
+            result=int,
         )
 
         count_where_sql = sql(
@@ -345,8 +345,8 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             --sql
             SELECT COUNT(*) FROM sample_data WHERE integer_value > $1;
             """,
-            args=int,
-            resultset=int,
+            arg=int,
+            result=int,
         )
 
         async with get_connection() as conn:
@@ -412,12 +412,12 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
                     SELECT
                         {nullif(0, index)}, {nullif(1, index)}, {nullif(2, index)}, {nullif(3, index)},
                         {nullif(4, index)}, {nullif(5, index)}, {nullif(6, index)}, {nullif(7, index)};
-                    """,
+                    """,  # pyright: ignore[reportArgumentType]
                     args=tuple[int, int, int, int, int, int, int, int],
                     resultset=tuple[tuple(params)],  # type: ignore[misc]
                 )  # type: ignore[call-overload]
 
-                rows = await passthrough_sql.fetch(conn, *args)
+                rows = await passthrough_sql.fetch(conn, *args)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
                 resultset: list[int | None] = [i for i in args]
                 resultset[index] = None
                 self.assertEqual(rows, [tuple(resultset)])

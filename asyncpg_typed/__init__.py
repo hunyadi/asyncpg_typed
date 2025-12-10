@@ -28,9 +28,9 @@ import asyncpg
 from asyncpg.prepared_stmt import PreparedStatement
 
 if sys.version_info < (3, 11):
-    from typing_extensions import TypeVarTuple, Unpack
+    from typing_extensions import LiteralString, TypeVarTuple, Unpack
 else:
-    from typing import TypeVarTuple, Unpack
+    from typing import LiteralString, TypeVarTuple, Unpack
 
 # list of supported data types
 DATA_TYPES: list[type[Any]] = [bool, int, float, Decimal, date, time, datetime, str, bytes, UUID]
@@ -176,28 +176,10 @@ class _SQLObject:
 
     def __init__(
         self,
-        *,
-        args: type[Any] | None = None,
-        resultset: type[Any] | None = None,
+        input_data_types: tuple[type[Any], ...],
+        output_data_types: tuple[type[Any], ...],
     ) -> None:
-        if args is not None:
-            if get_origin(args) is tuple:
-                input_data_types = get_args(args)
-            else:
-                input_data_types = (args,)
-        else:
-            input_data_types = ()
-
-        self.parameter_data_types = tuple(_SQLPlaceholder(ordinal, arg) for ordinal, arg in enumerate(input_data_types, start=1))
-
-        if resultset is not None:
-            if get_origin(resultset) is tuple:
-                output_data_types = get_args(resultset)
-            else:
-                output_data_types = (resultset,)
-        else:
-            output_data_types = ()
-
+        self.parameter_data_types = tuple(_SQLPlaceholder(ordinal, get_required_type(arg)) for ordinal, arg in enumerate(input_data_types, start=1))
         self.resultset_data_types = tuple(get_required_type(data_type) for data_type in output_data_types)
 
         # create a bit-field of required types (1: required; 0: optional)
@@ -350,7 +332,7 @@ class _SQLObject:
 if sys.version_info >= (3, 14):
     from string.templatelib import Interpolation, Template  # type: ignore[import-not-found]
 
-    SQLExpression: TypeAlias = Template | str
+    SQLExpression: TypeAlias = Template | LiteralString
 
     class _SQLTemplate(_SQLObject):
         """
@@ -364,10 +346,10 @@ if sys.version_info >= (3, 14):
             self,
             template: Template,
             *,
-            args: type[Any] | None = None,
-            resultset: type[Any] | None = None,
+            args: tuple[type[Any], ...],
+            resultset: tuple[type[Any], ...],
         ) -> None:
-            super().__init__(args=args, resultset=resultset)
+            super().__init__(args, resultset)
 
             for ip in template.interpolations:
                 if ip.conversion is not None:
@@ -379,7 +361,7 @@ if sys.version_info >= (3, 14):
 
             self.strings = template.strings
 
-            if args is not None:
+            if len(self.parameter_data_types) > 0:
 
                 def _to_placeholder(ip: Interpolation) -> _SQLPlaceholder:
                     ordinal = int(ip.value)
@@ -400,7 +382,7 @@ if sys.version_info >= (3, 14):
             return buf.getvalue()
 
 else:
-    SQLExpression = str
+    SQLExpression = LiteralString
 
 
 class _SQLString(_SQLObject):
@@ -414,10 +396,10 @@ class _SQLString(_SQLObject):
         self,
         sql: str,
         *,
-        args: type[Any] | None = None,
-        resultset: type[Any] | None = None,
+        args: tuple[type[Any], ...],
+        resultset: tuple[type[Any], ...],
     ) -> None:
-        super().__init__(args=args, resultset=resultset)
+        super().__init__(args, resultset)
         self.sql = sql
 
     def query(self) -> str:
@@ -510,7 +492,7 @@ class _SQLImpl(_SQL):
 
 ### START OF AUTO-GENERATED BLOCK ###
 
-PS = TypeVar("PS", bool, bool | None, int, int | None, float, float | None, Decimal, Decimal | None, date, date | None, time, time | None, datetime, datetime | None, str, str | None, bytes, bytes | None, UUID, UUID | None)
+PS = TypeVar("PS")
 P1 = TypeVar("P1")
 P2 = TypeVar("P2")
 P3 = TypeVar("P3")
@@ -519,7 +501,7 @@ P5 = TypeVar("P5")
 P6 = TypeVar("P6")
 P7 = TypeVar("P7")
 P8 = TypeVar("P8")
-RS = TypeVar("RS", bool, bool | None, int, int | None, float, float | None, Decimal, Decimal | None, date, date | None, time, time | None, datetime, datetime | None, str, str | None, bytes, bytes | None, UUID, UUID | None)
+RS = TypeVar("RS")
 R1 = TypeVar("R1")
 R2 = TypeVar("R2")
 RX = TypeVarTuple("RX")
@@ -765,27 +747,27 @@ class SQL_P8_RX(Generic[P1, P2, P3, P4, P5, P6, P7, P8, R1, R2, Unpack[RX]], SQL
 @overload
 def sql(stmt: SQLExpression) -> SQL_P0: ...
 @overload
-def sql(stmt: SQLExpression, *, resultset: type[RS]) -> SQL_P0_RS[RS]: ...
+def sql(stmt: SQLExpression, *, result: type[RS]) -> SQL_P0_RS[RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, resultset: type[tuple[R1]]) -> SQL_P0_RS[R1]: ...
 @overload
 def sql(stmt: SQLExpression, *, resultset: type[tuple[R1, R2, Unpack[RX]]]) -> SQL_P0_RX[R1, R2, Unpack[RX]]: ...
 @overload
-def sql(stmt: SQLExpression, *, args: type[PS]) -> SQL_P1[PS]: ...
+def sql(stmt: SQLExpression, *, arg: type[PS]) -> SQL_P1[PS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]]) -> SQL_P1[P1]: ...
 @overload
-def sql(stmt: SQLExpression, *, args: type[PS], resultset: type[RS]) -> SQL_P1_RS[PS, RS]: ...
+def sql(stmt: SQLExpression, *, arg: type[PS], result: type[RS]) -> SQL_P1_RS[PS, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]], resultset: type[tuple[R1]]) -> SQL_P1_RS[P1, R1]: ...
 @overload
-def sql(stmt: SQLExpression, *, args: type[PS], resultset: type[tuple[R1, R2, Unpack[RX]]]) -> SQL_P1_RX[PS, R1, R2, Unpack[RX]]: ...
+def sql(stmt: SQLExpression, *, arg: type[PS], resultset: type[tuple[R1, R2, Unpack[RX]]]) -> SQL_P1_RX[PS, R1, R2, Unpack[RX]]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1]], resultset: type[tuple[R1, R2, Unpack[RX]]]) -> SQL_P1_RX[P1, R1, R2, Unpack[RX]]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2]]) -> SQL_P2[P1, P2]: ...
 @overload
-def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2]], resultset: type[RS]) -> SQL_P2_RS[P1, P2, RS]: ...
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2]], result: type[RS]) -> SQL_P2_RS[P1, P2, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2]], resultset: type[tuple[R1]]) -> SQL_P2_RS[P1, P2, R1]: ...
 @overload
@@ -793,7 +775,7 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2]], resultset: type[tuple
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]]) -> SQL_P3[P1, P2, P3]: ...
 @overload
-def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]], resultset: type[RS]) -> SQL_P3_RS[P1, P2, P3, RS]: ...
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]], result: type[RS]) -> SQL_P3_RS[P1, P2, P3, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]], resultset: type[tuple[R1]]) -> SQL_P3_RS[P1, P2, P3, R1]: ...
 @overload
@@ -801,7 +783,7 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3]], resultset: type[t
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4]]) -> SQL_P4[P1, P2, P3, P4]: ...
 @overload
-def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4]], resultset: type[RS]) -> SQL_P4_RS[P1, P2, P3, P4, RS]: ...
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4]], result: type[RS]) -> SQL_P4_RS[P1, P2, P3, P4, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4]], resultset: type[tuple[R1]]) -> SQL_P4_RS[P1, P2, P3, P4, R1]: ...
 @overload
@@ -809,7 +791,7 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4]], resultset: ty
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]]) -> SQL_P5[P1, P2, P3, P4, P5]: ...
 @overload
-def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]], resultset: type[RS]) -> SQL_P5_RS[P1, P2, P3, P4, P5, RS]: ...
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]], result: type[RS]) -> SQL_P5_RS[P1, P2, P3, P4, P5, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]], resultset: type[tuple[R1]]) -> SQL_P5_RS[P1, P2, P3, P4, P5, R1]: ...
 @overload
@@ -817,7 +799,7 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5]], resultset
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6]]) -> SQL_P6[P1, P2, P3, P4, P5, P6]: ...
 @overload
-def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6]], resultset: type[RS]) -> SQL_P6_RS[P1, P2, P3, P4, P5, P6, RS]: ...
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6]], result: type[RS]) -> SQL_P6_RS[P1, P2, P3, P4, P5, P6, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6]], resultset: type[tuple[R1]]) -> SQL_P6_RS[P1, P2, P3, P4, P5, P6, R1]: ...
 @overload
@@ -825,7 +807,7 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6]], resul
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]]) -> SQL_P7[P1, P2, P3, P4, P5, P6, P7]: ...
 @overload
-def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]], resultset: type[RS]) -> SQL_P7_RS[P1, P2, P3, P4, P5, P6, P7, RS]: ...
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]], result: type[RS]) -> SQL_P7_RS[P1, P2, P3, P4, P5, P6, P7, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]], resultset: type[tuple[R1]]) -> SQL_P7_RS[P1, P2, P3, P4, P5, P6, P7, R1]: ...
 @overload
@@ -833,7 +815,7 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7]], r
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7, P8]]) -> SQL_P8[P1, P2, P3, P4, P5, P6, P7, P8]: ...
 @overload
-def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7, P8]], resultset: type[RS]) -> SQL_P8_RS[P1, P2, P3, P4, P5, P6, P7, P8, RS]: ...
+def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7, P8]], result: type[RS]) -> SQL_P8_RS[P1, P2, P3, P4, P5, P6, P7, P8, RS]: ...
 @overload
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, P2, P3, P4, P5, P6, P7, P8]], resultset: type[tuple[R1]]) -> SQL_P8_RS[P1, P2, P3, P4, P5, P6, P7, P8, R1]: ...
 @overload
@@ -848,23 +830,50 @@ def sql(
     *,
     args: type[Any] | None = None,
     resultset: type[Any] | None = None,
+    arg: type[Any] | None = None,
+    result: type[Any] | None = None,
 ) -> _SQL:
     """
     Creates a SQL statement with associated type information.
 
-    :param stmt: SQL statement as a string or template.
-    :param args: Type signature for input parameters. Use the type for a single parameter (e.g. `int`) or `tuple[...]` for multiple parameters.
-    :param resultset: Type signature for output data. Use the type for a single parameter (e.g. `int`) or `tuple[...]` for multiple parameters.
+    :param stmt: SQL statement as a literal string or template.
+    :param args: Type signature for multiple input parameters (e.g. `tuple[bool, int, str]`).
+    :param resultset: Type signature for multiple resultset columns (e.g. `tuple[datetime, Decimal, str]`).
+    :param arg: Type signature for a single input parameter (e.g. `int`).
+    :param result: Type signature for a single result column (e.g. `UUID`).
     """
+
+    if args is not None and arg is not None:
+        raise TypeError("expected: either `args` or `arg`; got: both")
+    if resultset is not None and result is not None:
+        raise TypeError("expected: either `resultset` or `result`; got: both")
+
+    if args is not None:
+        if get_origin(args) is not tuple:
+            raise TypeError(f"expected: `type[tuple[T, ...]]` for `args`; got: {type(args)}")
+        input_data_types = get_args(args)
+    elif arg is not None:
+        input_data_types = (arg,)
+    else:
+        input_data_types = ()
+
+    if resultset is not None:
+        if get_origin(resultset) is not tuple:
+            raise TypeError(f"expected: `type[tuple[T, ...]]` for `resultset`; got: {type(resultset)}")
+        output_data_types = get_args(resultset)
+    elif result is not None:
+        output_data_types = (result,)
+    else:
+        output_data_types = ()
 
     if sys.version_info >= (3, 14):
         obj: _SQLObject
         match stmt:
             case Template():
-                obj = _SQLTemplate(stmt, args=args, resultset=resultset)
+                obj = _SQLTemplate(stmt, args=input_data_types, resultset=output_data_types)
             case str():
-                obj = _SQLString(stmt, args=args, resultset=resultset)
+                obj = _SQLString(stmt, args=input_data_types, resultset=output_data_types)
     else:
-        obj = _SQLString(stmt, args=args, resultset=resultset)
+        obj = _SQLString(stmt, args=input_data_types, resultset=output_data_types)
 
     return _SQLImpl(obj)
