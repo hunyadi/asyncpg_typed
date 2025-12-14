@@ -28,6 +28,13 @@ if errorlevel 1 goto error
 %PYTHON_314% -m ruff format
 if errorlevel 1 goto error
 
+%PYTHON_314% -m mypy asyncpg_typed
+if errorlevel 1 goto error
+%PYTHON_314% -m mypy tests
+if errorlevel 1 goto error
+
+del tests\sample.py
+
 goto EOF
 
 :error
