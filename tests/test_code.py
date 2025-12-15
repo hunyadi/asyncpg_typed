@@ -93,14 +93,14 @@ def _write_function(out: TextIO, p: int, r: int, s: bool) -> None:
 def write_code(out: TextIO) -> None:
     for p in range(2):
         if p > 0:
-            print(f"class {_class(p, 0)}(Generic[Unpack[PX]], _SQL):", file=out)
+            print(f"class {_class(p, 0)}(Protocol[Unpack[PX]]):", file=out)
 
             print("    @abstractmethod", file=out)
             print("    async def execute(self, connection: Connection, *args: Unpack[PX]) -> None: ...", file=out)
             print("    @abstractmethod", file=out)
             print("    async def executemany(self, connection: Connection, args: Iterable[tuple[Unpack[PX]]]) -> None: ...", file=out)
         else:
-            print("class SQL_P0(_SQL):", file=out)
+            print("class SQL_P0(Protocol):", file=out)
             print("    @abstractmethod", file=out)
             print("    async def execute(self, connection: Connection) -> None: ...", file=out)
 
@@ -113,25 +113,30 @@ def write_code(out: TextIO) -> None:
                 resultset_return = "RT"
 
             if p > 0:
-                bases = f"Generic[{resultset_param}, Unpack[PX]], {_class(p, 0)}[Unpack[PX]]"
+                bases = f"{_class(p, 0)}[Unpack[PX]], Protocol[{resultset_param}, Unpack[PX]]"
             else:
-                bases = f"Generic[{resultset_param}], SQL_P0"
+                bases = f"SQL_P0, Protocol[{resultset_param}]"
 
             print(f"class {_class(p, r)}({bases}):", file=out)
 
+            if p > 0:
+                pos_args = ", *args: Unpack[PX]"
+            else:
+                pos_args = ""
+
             print(r"    @abstractmethod", file=out)
-            print(f"    async def fetch(self, connection: Connection, *args: Unpack[PX]) -> list[{resultset_return}]: ...", file=out)
+            print(f"    async def fetch(self, connection: Connection{pos_args}) -> list[{resultset_return}]: ...", file=out)
 
             if p > 0:
                 print(r"    @abstractmethod", file=out)
                 print(f"    async def fetchmany(self, connection: Connection, args: Iterable[tuple[Unpack[PX]]]) -> list[{resultset_return}]: ...", file=out)
 
             print(r"    @abstractmethod", file=out)
-            print(f"    async def fetchrow(self, connection: Connection, *args: Unpack[PX]) -> {resultset_return} | None: ...", file=out)
+            print(f"    async def fetchrow(self, connection: Connection{pos_args}) -> {resultset_return} | None: ...", file=out)
 
             if r == 1:
-                print("    @abstractmethod", file=out)
-                print("    async def fetchval(self, connection: Connection, *args: Unpack[PX]) -> R1: ...", file=out)
+                print(r"    @abstractmethod", file=out)
+                print(f"    async def fetchval(self, connection: Connection{pos_args}) -> R1: ...", file=out)
 
     for p in range(3):
         for r in range(3):

@@ -19,6 +19,7 @@
         "asyncpg",
         "bpchar",
         "bytea",
+        "dataclass",
         "errorlevel",
         "executemany",
         "fetchmany",
@@ -33,6 +34,7 @@
         "setuptools",
         "smallint",
         "templatelib",
+        "timedelta",
         "timestamptz",
         "timetz",
         "varchar"

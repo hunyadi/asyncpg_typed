@@ -13,14 +13,15 @@ __status__ = "Production"
 
 import enum
 import sys
+import typing
 from abc import abstractmethod
-from collections.abc import Iterable, Sequence
-from datetime import date, datetime, time
+from collections.abc import Callable, Iterable, Sequence
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from functools import reduce
 from io import StringIO
 from types import UnionType
-from typing import Any, Generic, TypeAlias, TypeVar, Union, get_args, get_origin, overload
+from typing import Any, Protocol, TypeAlias, TypeVar, Union, get_args, get_origin, overload
 from uuid import UUID
 
 import asyncpg
@@ -30,6 +31,13 @@ if sys.version_info < (3, 11):
     from typing_extensions import LiteralString, TypeVarTuple, Unpack
 else:
     from typing import LiteralString, TypeVarTuple, Unpack
+
+JsonType = None | bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
+
+RequiredJsonType = bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
+
+# types that the library can convert to
+TargetType: TypeAlias = type[Any] | UnionType
 
 # list of supported data types
 DATA_TYPES: list[type[Any]] = [bool, int, float, Decimal, date, time, datetime, str, bytes, UUID]
@@ -83,6 +91,14 @@ def is_standard_type(tp: Any) -> bool:
     return tp.__module__ == "builtins" or tp.__module__ == UnionType.__module__
 
 
+def is_json_type(tp: Any) -> bool:
+    """
+    `True` if the type represents an object de-serialized from a JSON string.
+    """
+
+    return tp in [JsonType, RequiredJsonType]
+
+
 def make_union_type(tpl: list[Any]) -> UnionType:
     """
     Creates a `UnionType` (a.k.a. `A | B | C`) dynamically at run time.
@@ -111,38 +127,77 @@ def get_required_type(tp: Any) -> Any:
         return type(None)
 
 
-# maps PostgreSQL internal type names to Python types
-_name_to_type: dict[str, Any] = {
-    "bool": bool,
-    "int2": int,
-    "int4": int,
-    "int8": int,
-    "float4": float,
-    "float8": float,
-    "numeric": Decimal,
-    "date": date,
-    "time": time,
-    "timetz": time,
-    "timestamp": datetime,
-    "timestamptz": datetime,
-    "bpchar": str,
-    "varchar": str,
-    "text": str,
-    "bytea": bytes,
-    "json": str,
-    "jsonb": str,
-    "uuid": UUID,
+_json_converter: Callable[[str], JsonType]
+if typing.TYPE_CHECKING:
+    import json
+
+    _json_decoder = json.JSONDecoder()
+    _json_converter = _json_decoder.decode
+else:
+    try:
+        import orjson
+
+        _json_converter = orjson.loads
+    except ModuleNotFoundError:
+        import json
+
+        _json_decoder = json.JSONDecoder()
+        _json_converter = _json_decoder.decode
+
+
+def get_converter_for(tp: Any) -> Callable[[Any], Any]:
+    """
+    Returns a callable that takes a wire type and returns a target type.
+
+    A wire type is one of the types returned by asyncpg.
+    A target type is one of the types supported by the library.
+    """
+
+    if is_json_type(tp):
+        # asyncpg returns fields of type `json` and `jsonb` as `str`, which must be de-serialized
+        return _json_converter
+    else:
+        # target data types that require conversion must have a single-argument `__init__` that takes an object of the source type
+        return tp
+
+
+# maps PostgreSQL internal type names to compatible Python types
+_name_to_type: dict[str, tuple[Any, ...]] = {
+    "bool": (bool,),
+    "int2": (int,),
+    "int4": (int,),
+    "int8": (int,),
+    "float4": (float,),
+    "float8": (float,),
+    "numeric": (Decimal,),
+    "date": (date,),
+    "time": (time,),
+    "timetz": (time,),
+    "timestamp": (datetime,),
+    "timestamptz": (datetime,),
+    "interval": (timedelta,),
+    "bpchar": (str,),
+    "varchar": (str,),
+    "text": (str,),
+    "bytea": (bytes,),
+    "json": (str, RequiredJsonType),
+    "jsonb": (str, RequiredJsonType),
+    "uuid": (UUID,),
+    "xml": (str,),
 }
 
 
-def check_data_type(schema: str, name: str, data_type: type[Any]) -> bool:
+def check_data_type(schema: str, name: str, data_type: TargetType) -> bool:
     """
     Verifies if the Python target type can represent the PostgreSQL source type.
     """
 
     if schema == "pg_catalog":
-        expected_type = _name_to_type.get(name)
-        return expected_type == data_type
+        if is_enum_type(data_type):
+            return name in ["bpchar", "varchar", "text"]
+
+        expected_types = _name_to_type.get(name)
+        return expected_types is not None and data_type in expected_types
     else:
         if is_standard_type(data_type):
             return False
@@ -153,9 +208,9 @@ def check_data_type(schema: str, name: str, data_type: type[Any]) -> bool:
 
 class _SQLPlaceholder:
     ordinal: int
-    data_type: type[Any]
+    data_type: TargetType
 
-    def __init__(self, ordinal: int, data_type: type[Any]) -> None:
+    def __init__(self, ordinal: int, data_type: TargetType) -> None:
         self.ordinal = ordinal
         self.data_type = data_type
 
@@ -169,14 +224,15 @@ class _SQLObject:
     """
 
     parameter_data_types: tuple[_SQLPlaceholder, ...]
-    resultset_data_types: tuple[type[Any], ...]
+    resultset_data_types: tuple[TargetType, ...]
     required: int
     cast: int
+    converters: tuple[Callable[[Any], Any], ...]
 
     def __init__(
         self,
-        input_data_types: tuple[type[Any], ...],
-        output_data_types: tuple[type[Any], ...],
+        input_data_types: tuple[TargetType, ...],
+        output_data_types: tuple[TargetType, ...],
     ) -> None:
         self.parameter_data_types = tuple(_SQLPlaceholder(ordinal, get_required_type(arg)) for ordinal, arg in enumerate(input_data_types, start=1))
         self.resultset_data_types = tuple(get_required_type(data_type) for data_type in output_data_types)
@@ -187,11 +243,13 @@ class _SQLObject:
             required |= (not is_optional_type(data_type)) << index
         self.required = required
 
-        # create a bit-field of types that require cast/conversion (1: pass to __init__; 0: skip)
+        # create a bit-field of types that require cast or serialization (1: apply conversion; 0: forward value as-is)
         cast = 0
         for index, data_type in enumerate(self.resultset_data_types):
-            cast |= is_enum_type(data_type) << index
+            cast |= (is_enum_type(data_type) or is_json_type(data_type)) << index
         self.cast = cast
+
+        self.converters = tuple(get_converter_for(data_type) for data_type in self.resultset_data_types)
 
     def _raise_required_is_none(self, row: tuple[Any, ...], row_index: int | None = None) -> None:
         """
@@ -345,8 +403,8 @@ if sys.version_info >= (3, 14):
             self,
             template: Template,
             *,
-            args: tuple[type[Any], ...],
-            resultset: tuple[type[Any], ...],
+            args: tuple[TargetType, ...],
+            resultset: tuple[TargetType, ...],
         ) -> None:
             super().__init__(args, resultset)
 
@@ -395,8 +453,8 @@ class _SQLString(_SQLObject):
         self,
         sql: str,
         *,
-        args: tuple[type[Any], ...],
-        resultset: tuple[type[Any], ...],
+        args: tuple[TargetType, ...],
+        resultset: tuple[TargetType, ...],
     ) -> None:
         super().__init__(args, resultset)
         self.sql = sql
@@ -405,7 +463,7 @@ class _SQLString(_SQLObject):
         return self.sql
 
 
-class _SQL:
+class _SQL(Protocol):
     """
     Represents a SQL statement with associated type information.
     """
@@ -449,8 +507,8 @@ class _SQLImpl(_SQL):
     def _cast_fetch(self, rows: list[asyncpg.Record]) -> list[tuple[Any, ...]]:
         cast = self.sql.cast
         if cast:
-            data_types = self.sql.resultset_data_types
-            resultset = [tuple((data_types[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(len(row))) for row in rows]
+            converters = self.sql.converters
+            resultset = [tuple((converters[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(len(row))) for row in rows]
         else:
             resultset = [tuple(value for value in row) for row in rows]
         self.sql.check_rows(resultset)
@@ -473,8 +531,8 @@ class _SQLImpl(_SQL):
             return None
         cast = self.sql.cast
         if cast:
-            data_types = self.sql.resultset_data_types
-            resultset = tuple((data_types[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(len(row)))
+            converters = self.sql.converters
+            resultset = tuple((converters[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(len(row)))
         else:
             resultset = tuple(value for value in row)
         self.sql.check_row(resultset)
@@ -483,7 +541,7 @@ class _SQLImpl(_SQL):
     async def fetchval(self, connection: asyncpg.Connection, *args: Any) -> Any:
         stmt = await self._prepare(connection)
         value = await stmt.fetchval(*args)
-        result = self.sql.resultset_data_types[0](value) if value is not None and self.sql.cast else value
+        result = self.sql.converters[0](value) if value is not None and self.sql.cast else value
         self.sql.check_value(result)
         return result
 
@@ -500,35 +558,35 @@ RX = TypeVarTuple("RX")
 ### START OF AUTO-GENERATED BLOCK ###
 
 
-class SQL_P0(_SQL):
+class SQL_P0(Protocol):
     @abstractmethod
     async def execute(self, connection: Connection) -> None: ...
 
 
-class SQL_R1_P0(Generic[R1], SQL_P0):
+class SQL_R1_P0(SQL_P0, Protocol[R1]):
     @abstractmethod
-    async def fetch(self, connection: Connection, *args: Unpack[PX]) -> list[tuple[R1]]: ...
+    async def fetch(self, connection: Connection) -> list[tuple[R1]]: ...
     @abstractmethod
-    async def fetchrow(self, connection: Connection, *args: Unpack[PX]) -> tuple[R1] | None: ...
+    async def fetchrow(self, connection: Connection) -> tuple[R1] | None: ...
     @abstractmethod
-    async def fetchval(self, connection: Connection, *args: Unpack[PX]) -> R1: ...
+    async def fetchval(self, connection: Connection) -> R1: ...
 
 
-class SQL_RX_P0(Generic[RT], SQL_P0):
+class SQL_RX_P0(SQL_P0, Protocol[RT]):
     @abstractmethod
-    async def fetch(self, connection: Connection, *args: Unpack[PX]) -> list[RT]: ...
+    async def fetch(self, connection: Connection) -> list[RT]: ...
     @abstractmethod
-    async def fetchrow(self, connection: Connection, *args: Unpack[PX]) -> RT | None: ...
+    async def fetchrow(self, connection: Connection) -> RT | None: ...
 
 
-class SQL_PX(Generic[Unpack[PX]], _SQL):
+class SQL_PX(Protocol[Unpack[PX]]):
     @abstractmethod
     async def execute(self, connection: Connection, *args: Unpack[PX]) -> None: ...
     @abstractmethod
     async def executemany(self, connection: Connection, args: Iterable[tuple[Unpack[PX]]]) -> None: ...
 
 
-class SQL_R1_PX(Generic[R1, Unpack[PX]], SQL_PX[Unpack[PX]]):
+class SQL_R1_PX(SQL_PX[Unpack[PX]], Protocol[R1, Unpack[PX]]):
     @abstractmethod
     async def fetch(self, connection: Connection, *args: Unpack[PX]) -> list[tuple[R1]]: ...
     @abstractmethod
@@ -539,7 +597,7 @@ class SQL_R1_PX(Generic[R1, Unpack[PX]], SQL_PX[Unpack[PX]]):
     async def fetchval(self, connection: Connection, *args: Unpack[PX]) -> R1: ...
 
 
-class SQL_RX_PX(Generic[RT, Unpack[PX]], SQL_PX[Unpack[PX]]):
+class SQL_RX_PX(SQL_PX[Unpack[PX]], Protocol[RT, Unpack[PX]]):
     @abstractmethod
     async def fetch(self, connection: Connection, *args: Unpack[PX]) -> list[RT]: ...
     @abstractmethod

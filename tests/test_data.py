@@ -14,7 +14,7 @@ from types import UnionType
 from typing import Any
 from uuid import UUID, uuid4
 
-from asyncpg_typed import sql
+from asyncpg_typed import JsonType, sql
 from tests.connection import get_connection
 
 
@@ -90,6 +90,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
                 time_zone_value time with time zone NOT NULL,
                 date_time_value timestamp without time zone NOT NULL,
                 date_time_zone_value timestamp with time zone NOT NULL,
+                time_delta_value interval NOT NULL,
                 CONSTRAINT pk_datetime_types PRIMARY KEY (id)
             );
             """
@@ -98,20 +99,20 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
         insert_sql = sql(
             """
             --sql
-            INSERT INTO datetime_types (date_value, time_value, time_zone_value, date_time_value, date_time_zone_value)
-            VALUES ($1, $2, $3, $4, $5);
+            INSERT INTO datetime_types (date_value, time_value, time_zone_value, date_time_value, date_time_zone_value, time_delta_value)
+            VALUES ($1, $2, $3, $4, $5, $6);
             """,
-            args=tuple[date, time, time, datetime, datetime],
+            args=tuple[date, time, time, datetime, datetime, timedelta],
         )
 
         select_sql = sql(
             """
             --sql
-            SELECT date_value, time_value, time_zone_value, date_time_value, date_time_zone_value
+            SELECT date_value, time_value, time_zone_value, date_time_value, date_time_zone_value, time_delta_value
             FROM datetime_types
             ORDER BY id;
             """,
-            resultset=tuple[date, time, time, datetime, datetime],
+            resultset=tuple[date, time, time, datetime, datetime, timedelta],
         )
 
         async with get_connection() as conn:
@@ -122,6 +123,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
                 time(23, 59, 59, tzinfo=timezone(timedelta(hours=1), "Europe/Budapest")),
                 datetime.now(tz=None),
                 datetime.now(tz=timezone.utc),
+                timedelta(days=12, hours=23, minutes=59, seconds=59),
             )
             await insert_sql.executemany(conn, [record])
             self.assertEqual(await select_sql.fetch(conn), [record])
@@ -166,16 +168,86 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             await insert_sql.executemany(conn, [record])
             self.assertEqual(await select_sql.fetch(conn), [record])
 
-    async def test_composite_type(self) -> None:
+    async def test_json_type(self) -> None:
         create_sql = sql(
             """
             --sql
-            CREATE TEMPORARY TABLE composite_types(
+            CREATE TEMPORARY TABLE json_type(
                 id bigint GENERATED ALWAYS AS IDENTITY,
                 uuid_value uuid NOT NULL,
                 json_value json,
                 jsonb_value jsonb NOT NULL,
-                CONSTRAINT pk_composite_types PRIMARY KEY (id)
+                CONSTRAINT pk_json_type PRIMARY KEY (id)
+            );
+            """
+        )
+
+        insert_str_sql = sql(
+            """
+            --sql
+            INSERT INTO json_type (uuid_value, json_value, jsonb_value)
+            VALUES ($1, $2, $3);
+            """,
+            args=tuple[UUID, str | None, str],
+        )
+
+        insert_json_sql = sql(
+            """
+            --sql
+            INSERT INTO json_type (uuid_value, json_value, jsonb_value)
+            VALUES ($1, $2, $3);
+            """,
+            args=tuple[UUID, JsonType, JsonType],
+        )
+
+        select_sql = sql(
+            """
+            --sql
+            SELECT uuid_value, json_value, jsonb_value, jsonb_value
+            FROM json_type
+            ORDER BY id;
+            """,
+            resultset=tuple[UUID, str | None, str, JsonType],
+        )
+
+        async with get_connection() as conn:
+            await create_sql.execute(conn)
+            uuid_1, uuid_2, uuid_3, uuid_4 = uuid4(), uuid4(), uuid4(), uuid4()
+            pretty_json = '{\n"key": [ true, "value", 3 ]\n}'
+            standard_json = '{"key": [true, "value", 3]}'
+            await insert_str_sql.executemany(
+                conn,
+                [
+                    (uuid_1, pretty_json, pretty_json),
+                    (uuid_2, None, "[{}]"),
+                ],
+            )
+            await insert_json_sql.executemany(
+                conn,
+                [
+                    (uuid_3, pretty_json, pretty_json),
+                    (uuid_4, None, "[{}]"),
+                ],
+            )
+            self.assertEqual(
+                await select_sql.fetch(conn),
+                [
+                    (uuid_1, pretty_json, standard_json, {"key": [True, "value", 3]}),
+                    (uuid_2, None, "[{}]", [{}]),
+                    (uuid_3, pretty_json, standard_json, {"key": [True, "value", 3]}),
+                    (uuid_4, None, "[{}]", [{}]),
+                ],
+            )
+
+    async def test_xml_type(self) -> None:
+        create_sql = sql(
+            """
+            --sql
+            CREATE TEMPORARY TABLE xml_type(
+                id bigint GENERATED ALWAYS AS IDENTITY,
+                uuid_value uuid NOT NULL,
+                xml_value xml NOT NULL,
+                CONSTRAINT pk_xml_type PRIMARY KEY (id)
             );
             """
         )
@@ -183,28 +255,27 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
         insert_sql = sql(
             """
             --sql
-            INSERT INTO composite_types (uuid_value, json_value, jsonb_value)
-            VALUES ($1, $2, $3);
+            INSERT INTO xml_type (uuid_value, xml_value)
+            VALUES ($1, $2);
             """,
-            args=tuple[UUID, str | None, str],
+            args=tuple[UUID, str],
         )
 
         select_sql = sql(
             """
             --sql
-            SELECT uuid_value, json_value, jsonb_value
-            FROM composite_types
+            SELECT uuid_value, xml_value
+            FROM xml_type
             ORDER BY id;
             """,
-            resultset=tuple[UUID, str | None, str],
+            resultset=tuple[UUID, str],
         )
 
         async with get_connection() as conn:
             await create_sql.execute(conn)
-            record1 = (uuid4(), '{\n"key": [ true, "value", 3 ]\n}', '{"key": [true, "value", 3]}')
-            record2 = (uuid4(), None, "[{}]")
-            await insert_sql.executemany(conn, [record1, record2])
-            self.assertEqual(await select_sql.fetch(conn), [record1, record2])
+            record = (uuid4(), "<book><title>Manual</title><chapter>...</chapter></book>")
+            await insert_sql.execute(conn, *record)
+            self.assertEqual(await select_sql.fetch(conn), [record])
 
     async def test_enum_type(self) -> None:
         create_sql = sql(
@@ -220,6 +291,8 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             CREATE TEMPORARY TABLE enum_types(
                 id bigint GENERATED ALWAYS AS IDENTITY,
                 enum_value state NOT NULL,
+                string_value varchar(64) NOT NULL,
+                text_value text NOT NULL,
                 CONSTRAINT pk_sample_data PRIMARY KEY (id)
             );
             """
@@ -228,20 +301,20 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
         insert_sql = sql(
             """
             --sql
-            INSERT INTO enum_types (enum_value)
-            VALUES ($1);
+            INSERT INTO enum_types (enum_value, string_value, text_value)
+            VALUES ($1, $2, $3);
             """,
-            arg=State,
+            args=tuple[State, State, State],
         )
 
         select_sql = sql(
             """
             --sql
-            SELECT enum_value, enum_value
+            SELECT enum_value, enum_value, string_value, string_value, text_value, text_value
             FROM enum_types
             ORDER BY id;
             """,
-            resultset=tuple[State, State | None],
+            resultset=tuple[State, State | None, State, State | None, State, State | None],
         )
 
         value_sql = sql(
@@ -256,20 +329,20 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
 
         async with get_connection() as conn:
             await create_sql.execute(conn)
-            await insert_sql.executemany(conn, [(State.ACTIVE,), (State.INACTIVE,)])
+            await insert_sql.executemany(conn, [(State.ACTIVE, State.ACTIVE, State.ACTIVE), (State.INACTIVE, State.INACTIVE, State.INACTIVE)])
 
             rows = await select_sql.fetch(conn)
             for row in rows:
                 for column in row:
                     self.assertIsInstance(column, State)
-            self.assertEqual(rows, [(State.ACTIVE, State.ACTIVE), (State.INACTIVE, State.INACTIVE)])
+            self.assertEqual(rows, [(State.ACTIVE, State.ACTIVE) * 3, (State.INACTIVE, State.INACTIVE) * 3])
 
             record = await select_sql.fetchrow(conn)
             self.assertIsNotNone(record)
             if record:
                 for column in record:
                     self.assertIsInstance(column, State)
-                self.assertEqual(record, (State.ACTIVE, State.ACTIVE))
+                self.assertEqual(record, (State.ACTIVE, State.ACTIVE) * 3)
 
             value = await value_sql.fetchval(conn)
             self.assertIsInstance(value, State)
@@ -383,17 +456,17 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             """
             --sql
             SELECT
-                $1::int, $2::int, $3::int, $4::int, $5::int, $6::int, $7::int, $8::int,
-                $1::int, $2::int, $3::int, $4::int, $5::int, $6::int, $7::int, $8::int;
+                $1::int,  $2::int,  $3::int,  $4::int,  $5::int,  $6::int,  $7::int,  $8::int,
+                $9::int, $10::int, $11::int, $12::int, $13::int, $14::int, $15::int, $16::int;
             """,
-            args=tuple[int, int, int, int, int, int, int, int],
+            args=tuple[int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int],
             resultset=tuple[int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int],
         )
 
         async with get_connection() as conn:
-            numbers = [randint(-2_147_483_648, 2_147_483_647) for _ in range(8)]
+            numbers = tuple(randint(-2_147_483_648, 2_147_483_647) for _ in range(16))
             rows = await passthrough_sql.fetch(conn, *numbers)
-            self.assertEqual(rows, [(*numbers, *numbers)])
+            self.assertEqual(rows, [numbers])
 
     async def test_nullable(self) -> None:
         def nullif(a: int, b: int) -> str:

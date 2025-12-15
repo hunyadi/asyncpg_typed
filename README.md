@@ -36,6 +36,25 @@ try:
 
 finally:
     await conn.close()
+
+# create a list of data-class instances from a list of typed tuples
+@dataclass
+class DataObject:
+    boolean_value: bool
+    integer_value: int
+    string_value: str | None
+
+# ✅ Valid initializer call
+items = [DataObject(*row) for row in rows]
+
+@dataclass
+class MismatchedObject:
+    boolean_value: bool
+    integer_value: int
+    string_value: str
+
+# ⚠️ Argument of type "int | None" cannot be assigned to parameter "integer_value" of type "int" in function "__init__"; "None" is not assignable to "int"
+items = [MismatchedObject(*row) for row in rows]
 ```
 
 
@@ -99,7 +118,7 @@ The parameters `arg` and `result` take a single type `P` or `R`. Passing a simpl
 
 The number of types in `args` must correspond to the number of query parameters. (This is validated on calling `sql(...)` for the *t-string* syntax.) The number of types in `resultset` must correspond to the number of columns returned by the query.
 
-Both `args` and `resultset` types must be compatible with their corresponding PostgreSQL query parameter types and resultset column types, respectively. The following table shows the mapping between PostgreSQL and Python types.
+Both `args` and `resultset` types must be compatible with their corresponding PostgreSQL query parameter types and resultset column types, respectively. The following table shows the mapping between PostgreSQL and Python types. When there are multiple options separated by a slash, either of the types can be specified as a source or target type.
 
 | PostgreSQL type   | Python type        |
 | ----------------- | ------------------ |
@@ -116,14 +135,18 @@ Both `args` and `resultset` types must be compatible with their corresponding Po
 | `timetz`          | `time` (tz)        |
 | `timestamp`       | `datetime` (naive) |
 | `timestamptz`     | `datetime` (tz)    |
+| `interval`        | `timedelta`        |
 | `char(N)`         | `str`              |
 | `varchar(N)`      | `str`              |
 | `text`            | `str`              |
 | `bytea`           | `bytes`            |
-| `json`            | `str`              |
-| `jsonb`           | `str`              |
+| `json`            | `str`/`JsonType`   |
+| `jsonb`           | `str`/`JsonType`   |
+| `xml`             | `str`              |
 | `uuid`            | `UUID`             |
 | enumeration       | `E: StrEnum`       |
+
+PostgreSQL types `json` and `jsonb` are [returned by asyncpg](https://magicstack.github.io/asyncpg/current/usage.html#type-conversion) as Python type `str`. However, if we specify the union type `JsonType` in `args` or `resultset`, the JSON string is parsed as if by calling `json.loads()`. (`JsonType` is defined in the module `asyncpg_typed`.) If the library `orjson` is present, its faster routines are invoked instead of the slower standard library implementation in the module `json`.
 
 ### Using a SQL object
 
