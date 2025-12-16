@@ -7,7 +7,7 @@ Type-safe queries for asyncpg.
 import random
 import re
 import unittest
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
@@ -163,7 +163,7 @@ def _instantiate(tp: type[Any]) -> str:
 
 
 def _random_type() -> type[Any]:
-    return random.choice([bool, int, float, Decimal, date, time, datetime, str, bytes, UUID])
+    return random.choice([bool, int, float, Decimal, date, time, datetime, timedelta, str, bytes, UUID])
 
 
 class TestCode(unittest.TestCase):
@@ -187,7 +187,7 @@ class TestCode(unittest.TestCase):
 
     def test_verify(self) -> None:
         with open(Path(__file__).parent / "sample.py", "w") as f:
-            print("from datetime import date, datetime, time", file=f)
+            print("from datetime import date, datetime, time, timedelta", file=f)
             print("from decimal import Decimal", file=f)
             print("from typing import assert_type", file=f)
             print("from uuid import UUID", file=f)

@@ -4,7 +4,7 @@ Type-safe queries for asyncpg.
 :see: https://github.com/hunyadi/asyncpg_typed
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 __author__ = "Levente Hunyadi"
 __copyright__ = "Copyright 2025, Levente Hunyadi"
 __license__ = "MIT"
@@ -36,15 +36,7 @@ JsonType = None | bool | int | float | str | dict[str, "JsonType"] | list["JsonT
 
 RequiredJsonType = bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
 
-# types that the library can convert to
 TargetType: TypeAlias = type[Any] | UnionType
-
-# list of supported data types
-DATA_TYPES: list[type[Any]] = [bool, int, float, Decimal, date, time, datetime, str, bytes, UUID]
-
-# maximum number of inbound query parameters
-NUM_ARGS = 8
-
 
 if sys.version_info >= (3, 11):
 
