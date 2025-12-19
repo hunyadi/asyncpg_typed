@@ -7,6 +7,7 @@ Type-safe queries for asyncpg.
 import random
 import re
 import unittest
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from io import StringIO
@@ -77,20 +78,9 @@ def _param_list(p: int, r: int) -> str:
         return ""
 
 
-def _write_function(out: TextIO, p: int, r: int, s: bool) -> None:
-    """
-    Writes an overload function for creating a typed SQL query.
+def _write_classes(out: TextIO) -> None:
+    "Generates code for `Protocol` classes to match argument/resultset signature combinations with permitted operations."
 
-    :param p: Number of inbound parameters.
-    :param r: Number of outbound parameters.
-    :param s: Whether to use singular types.
-    """
-
-    print(r"@overload", file=out)
-    print(f"def sql(stmt: SQLExpression{_arg_list(p, r, s)}) -> {_class(p, r)}{_param_list(p, r)}: ...", file=out)
-
-
-def write_code(out: TextIO) -> None:
     for p in range(2):
         if p > 0:
             print(f"class {_class(p, 0)}(Protocol[Unpack[PX]]):", file=out)
@@ -138,17 +128,40 @@ def write_code(out: TextIO) -> None:
                 print(r"    @abstractmethod", file=out)
                 print(f"    async def fetchval(self, connection: Connection{pos_args}) -> R1: ...", file=out)
 
+
+def _write_function(out: TextIO, name: str, stmt: str, p: int, r: int, s: bool) -> None:
+    """
+    Writes an overload function for creating a typed SQL query.
+
+    :param name: Function name.
+    :param stmt: SQL statement type.
+    :param p: Number of inbound parameters.
+    :param r: Number of outbound parameters.
+    :param s: Whether to use singular types.
+    """
+
+    print(r"@overload", file=out)
+    print(f"def {name}(stmt: {stmt}{_arg_list(p, r, s)}) -> {_class(p, r)}{_param_list(p, r)}: ...", file=out)
+
+
+def _write_sql(out: TextIO) -> None:
+    "Generates code for the function `sql` to accept various argument/resultset signature combinations."
+
     for p in range(3):
         for r in range(3):
             if r == 1:
-                _write_function(out, p, r, True)
-            _write_function(out, p, r, False)
+                _write_function(out, "sql", "SQLExpression", p, r, True)
+            _write_function(out, "sql", "SQLExpression", p, r, False)
 
 
-def generate_code() -> str:
-    stream = StringIO()
-    write_code(stream)
-    return stream.getvalue()
+def _write_unsafe_sql(out: TextIO) -> None:
+    "Generates code for the function `unsafe_sql` to accept various argument/resultset signature combinations."
+
+    for p in range(3):
+        for r in range(3):
+            if r == 1:
+                _write_function(out, "unsafe_sql", "str", p, r, True)
+            _write_function(out, "unsafe_sql", "str", p, r, False)
 
 
 def _instantiate(tp: type[Any]) -> str:
@@ -166,22 +179,30 @@ def _random_type() -> type[Any]:
     return random.choice([bool, int, float, Decimal, date, time, datetime, timedelta, str, bytes, UUID])
 
 
-class TestCode(unittest.TestCase):
-    def test_code(self) -> None:
-        self.assertTrue(generate_code())
+def _update_code(source_code: str, block_name: str, writer: Callable[[TextIO], None]) -> str:
+    prolog = f"### START OF AUTO-GENERATED BLOCK FOR {block_name} ###\n"
+    epilog = f"### END OF AUTO-GENERATED BLOCK FOR {block_name} ###\n"
 
+    stream = StringIO()
+    writer(stream)
+    code = stream.getvalue()
+
+    search = "\n".join([prolog, r".*?", epilog])
+    repl = "\n".join([prolog, code, epilog])
+    source_code, count = re.subn(search, repl, source_code, count=1, flags=re.DOTALL)
+    if count != 1:
+        raise ValueError(f"expected: a single match; got: {count}")
+    return source_code
+
+
+class TestCode(unittest.TestCase):
     def test_update(self) -> None:
         source_file = Path(__file__).parent.parent / "asyncpg_typed" / "__init__.py"
         source_code = source_file.read_text(encoding="utf-8")
 
-        prolog = "### START OF AUTO-GENERATED BLOCK ###\n"
-        epilog = "### END OF AUTO-GENERATED BLOCK ###\n"
-        code = generate_code()
-
-        search = "\n".join([prolog, r".*?", epilog])
-        repl = "\n".join([prolog, code, epilog])
-        source_code, count = re.subn(search, repl, source_code, count=1, flags=re.DOTALL)
-        self.assertEqual(count, 1)
+        source_code = _update_code(source_code, "Protocol", _write_classes)
+        source_code = _update_code(source_code, "sql", _write_sql)
+        source_code = _update_code(source_code, "unsafe_sql", _write_unsafe_sql)
 
         source_file.write_text(source_code, encoding="utf-8")
 
@@ -191,8 +212,11 @@ class TestCode(unittest.TestCase):
             print("from decimal import Decimal", file=f)
             print("from typing import assert_type", file=f)
             print("from uuid import UUID", file=f)
+            print(file=f)
             print("from asyncpg_typed import sql", file=f)
             print("from tests.connection import get_connection", file=f)
+            print(file=f)
+            print(file=f)
 
             print("async def main() -> None:", file=f)
             print("    async with get_connection() as conn:", file=f)
@@ -226,23 +250,25 @@ class TestCode(unittest.TestCase):
                     print(f'        {var} = sql("test", {", ".join(kwargs)})', file=f)
 
                     if input_type_list:
-                        args = ", ".join(_instantiate(tp) for tp in input_type_list)
-                        print(f"        await {var}.execute(conn, {args})", file=f)
+                        arg_items = ", ".join(_instantiate(tp) for tp in input_type_list)
+                        args = ", " + arg_items
+
+                        print(f"        await {var}.execute(conn{args})", file=f)
                         if len(input_type_list) == 1:
-                            args_tuple = f"({args}, )"
+                            args_tuple = f"({arg_items}, )"
                         else:
-                            args_tuple = f"({args})"
+                            args_tuple = f"({arg_items})"
                         print(f"        await {var}.executemany(conn, [{args_tuple}])", file=f)
                     else:
                         args = ""
 
                     if output_type_list:
                         output_types = ", ".join(tp.__name__ for tp in output_type_list)
-                        print(f"        assert_type(await {var}.fetch(conn, {args}), list[tuple[{output_types}]])", file=f)
-                        print(f"        assert_type(await {var}.fetchrow(conn, {args}), tuple[{output_types}] | None)", file=f)
+                        print(f"        assert_type(await {var}.fetch(conn{args}), list[tuple[{output_types}]])", file=f)
+                        print(f"        assert_type(await {var}.fetchrow(conn{args}), tuple[{output_types}] | None)", file=f)
 
                         if len(output_type_list) == 1:
-                            print(f"        assert_type(await {var}.fetchval(conn, {args}), {output_type_list[0].__name__})", file=f)
+                            print(f"        assert_type(await {var}.fetchval(conn{args}), {output_type_list[0].__name__})", file=f)
 
                     print(file=f)
 

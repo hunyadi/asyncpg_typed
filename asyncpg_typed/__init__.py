@@ -547,7 +547,7 @@ R2 = TypeVar("R2")
 RX = TypeVarTuple("RX")
 
 
-### START OF AUTO-GENERATED BLOCK ###
+### START OF AUTO-GENERATED BLOCK FOR Protocol ###
 
 
 class SQL_P0(Protocol):
@@ -598,6 +598,12 @@ class SQL_RX_PX(SQL_PX[Unpack[PX]], Protocol[RT, Unpack[PX]]):
     async def fetchrow(self, connection: Connection, *args: Unpack[PX]) -> RT | None: ...
 
 
+### END OF AUTO-GENERATED BLOCK FOR Protocol ###
+
+
+### START OF AUTO-GENERATED BLOCK FOR sql ###
+
+
 @overload
 def sql(stmt: SQLExpression) -> SQL_P0: ...
 @overload
@@ -624,17 +630,10 @@ def sql(stmt: SQLExpression, *, args: type[tuple[P1, Unpack[PX]]], resultset: ty
 def sql(stmt: SQLExpression, *, args: type[tuple[P1, Unpack[PX]]], resultset: type[tuple[R1, R2, Unpack[RX]]]) -> SQL_RX_PX[tuple[R1, R2, Unpack[RX]], P1, Unpack[PX]]: ...
 
 
-### END OF AUTO-GENERATED BLOCK ###
+### END OF AUTO-GENERATED BLOCK FOR sql ###
 
 
-def sql(
-    stmt: SQLExpression,
-    *,
-    args: type[Any] | None = None,
-    resultset: type[Any] | None = None,
-    arg: type[Any] | None = None,
-    result: type[Any] | None = None,
-) -> _SQL:
+def sql(stmt: SQLExpression, *, args: type[Any] | None = None, resultset: type[Any] | None = None, arg: type[Any] | None = None, result: type[Any] | None = None) -> _SQL:
     """
     Creates a SQL statement with associated type information.
 
@@ -644,6 +643,75 @@ def sql(
     :param arg: Type signature for a single input parameter (e.g. `int`).
     :param result: Type signature for a single result column (e.g. `UUID`).
     """
+
+    input_data_types, output_data_types = _sql_args_resultset(args=args, resultset=resultset, arg=arg, result=result)
+
+    obj: _SQLObject
+    if sys.version_info >= (3, 14):
+        match stmt:
+            case Template():
+                obj = _SQLTemplate(stmt, args=input_data_types, resultset=output_data_types)
+            case str():
+                obj = _SQLString(stmt, args=input_data_types, resultset=output_data_types)
+    else:
+        obj = _SQLString(stmt, args=input_data_types, resultset=output_data_types)
+
+    return _SQLImpl(obj)
+
+
+### START OF AUTO-GENERATED BLOCK FOR unsafe_sql ###
+
+
+@overload
+def unsafe_sql(stmt: str) -> SQL_P0: ...
+@overload
+def unsafe_sql(stmt: str, *, result: type[R1]) -> SQL_R1_P0[R1]: ...
+@overload
+def unsafe_sql(stmt: str, *, resultset: type[tuple[R1]]) -> SQL_R1_P0[R1]: ...
+@overload
+def unsafe_sql(stmt: str, *, resultset: type[tuple[R1, R2, Unpack[RX]]]) -> SQL_RX_P0[tuple[R1, R2, Unpack[RX]]]: ...
+@overload
+def unsafe_sql(stmt: str, *, arg: type[P1]) -> SQL_PX[P1]: ...
+@overload
+def unsafe_sql(stmt: str, *, arg: type[P1], result: type[R1]) -> SQL_R1_PX[R1, P1]: ...
+@overload
+def unsafe_sql(stmt: str, *, arg: type[P1], resultset: type[tuple[R1]]) -> SQL_R1_PX[R1, P1]: ...
+@overload
+def unsafe_sql(stmt: str, *, arg: type[P1], resultset: type[tuple[R1, R2, Unpack[RX]]]) -> SQL_RX_PX[tuple[R1, R2, Unpack[RX]], P1]: ...
+@overload
+def unsafe_sql(stmt: str, *, args: type[tuple[P1, Unpack[PX]]]) -> SQL_PX[P1, Unpack[PX]]: ...
+@overload
+def unsafe_sql(stmt: str, *, args: type[tuple[P1, Unpack[PX]]], result: type[R1]) -> SQL_R1_PX[R1, P1, Unpack[PX]]: ...
+@overload
+def unsafe_sql(stmt: str, *, args: type[tuple[P1, Unpack[PX]]], resultset: type[tuple[R1]]) -> SQL_R1_PX[R1, P1, Unpack[PX]]: ...
+@overload
+def unsafe_sql(stmt: str, *, args: type[tuple[P1, Unpack[PX]]], resultset: type[tuple[R1, R2, Unpack[RX]]]) -> SQL_RX_PX[tuple[R1, R2, Unpack[RX]], P1, Unpack[PX]]: ...
+
+
+### END OF AUTO-GENERATED BLOCK FOR unsafe_sql ###
+
+
+def unsafe_sql(stmt: str, *, args: type[Any] | None = None, resultset: type[Any] | None = None, arg: type[Any] | None = None, result: type[Any] | None = None) -> _SQL:
+    """
+    Creates a SQL statement with associated type information from a string.
+
+    This offers an alternative to the function :func:`sql` when we want to prevent the type checker from enforcing
+    a string literal, e.g. when we want to embed a variable as the table name to dynamically create a SQL statement.
+
+    :param stmt: SQL statement as a string (or f-string).
+    :param args: Type signature for multiple input parameters (e.g. `tuple[bool, int, str]`).
+    :param resultset: Type signature for multiple resultset columns (e.g. `tuple[datetime, Decimal, str]`).
+    :param arg: Type signature for a single input parameter (e.g. `int`).
+    :param result: Type signature for a single result column (e.g. `UUID`).
+    """
+
+    input_data_types, output_data_types = _sql_args_resultset(args=args, resultset=resultset, arg=arg, result=result)
+    obj = _SQLString(stmt, args=input_data_types, resultset=output_data_types)
+    return _SQLImpl(obj)
+
+
+def _sql_args_resultset(*, args: type[Any] | None = None, resultset: type[Any] | None = None, arg: type[Any] | None = None, result: type[Any] | None = None) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    "Parses an argument/resultset signature into input/output types."
 
     if args is not None and arg is not None:
         raise TypeError("expected: either `args` or `arg`; got: both")
@@ -668,14 +736,4 @@ def sql(
     else:
         output_data_types = ()
 
-    if sys.version_info >= (3, 14):
-        obj: _SQLObject
-        match stmt:
-            case Template():
-                obj = _SQLTemplate(stmt, args=input_data_types, resultset=output_data_types)
-            case str():
-                obj = _SQLString(stmt, args=input_data_types, resultset=output_data_types)
-    else:
-        obj = _SQLString(stmt, args=input_data_types, resultset=output_data_types)
-
-    return _SQLImpl(obj)
+    return input_data_types, output_data_types
