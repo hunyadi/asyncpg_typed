@@ -20,6 +20,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from functools import reduce
 from io import StringIO
+from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
 from types import UnionType
 from typing import Any, Protocol, TypeAlias, TypeVar, Union, get_args, get_origin, overload
 from uuid import UUID
@@ -89,6 +90,14 @@ def is_json_type(tp: Any) -> bool:
     """
 
     return tp in [JsonType, RequiredJsonType]
+
+
+def is_inet_type(tp: Any) -> bool:
+    """
+    `True` if the type represents an IP address or network.
+    """
+
+    return tp in [IPv4Address, IPv6Address, IPv4Network, IPv6Network]
 
 
 def make_union_type(tpl: list[Any]) -> UnionType:
@@ -172,6 +181,10 @@ _name_to_type: dict[str, tuple[Any, ...]] = {
     "varchar": (str,),
     "text": (str,),
     "bytea": (bytes,),
+    "cidr": (IPv4Network, IPv6Network, IPv4Network | IPv6Network),
+    "inet": (IPv4Network, IPv6Network, IPv4Network | IPv6Network, IPv4Address, IPv6Address, IPv4Address | IPv6Address),
+    "macaddr": (str,),
+    "macaddr8": (str,),
     "json": (str, RequiredJsonType),
     "jsonb": (str, RequiredJsonType),
     "uuid": (UUID,),
@@ -179,23 +192,43 @@ _name_to_type: dict[str, tuple[Any, ...]] = {
 }
 
 
-def check_data_type(schema: str, name: str, data_type: TargetType) -> bool:
+def type_to_str(tp: Any) -> str:
+    "Emits a friendly name for a type."
+
+    if isinstance(tp, type):
+        return tp.__name__
+    else:
+        return str(tp)
+
+
+def check_data_type(attr: asyncpg.Attribute, data_type: TargetType) -> None:
     """
     Verifies if the Python target type can represent the PostgreSQL source type.
     """
 
-    if schema == "pg_catalog":
+    if attr.type.schema == "pg_catalog":
+        # well-known PostgreSQL types
+
+        name = attr.type.name
         if is_enum_type(data_type):
-            return name in ["bpchar", "varchar", "text"]
-
-        expected_types = _name_to_type.get(name)
-        return expected_types is not None and data_type in expected_types
+            if name not in ["bpchar", "varchar", "text"]:
+                raise TypeError(f"expected: Python enumeration type `{type_to_str(data_type)}` for column `{attr.name}`; got: PostgreSQL type `{attr.type.kind}` of `{attr.type.name}` instead of `char`, `varchar` or `text`")
+        else:
+            expected_types = _name_to_type.get(name)
+            if expected_types is None:
+                raise TypeError(f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; got: unrecognized PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`")
+            elif data_type not in expected_types:
+                raise TypeError(
+                    f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; "
+                    f"got: incompatible PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`, which converts to one of the Python types {', '.join(f'`{type_to_str(tp)}`' for tp in expected_types)}"
+                )
     else:
-        if is_standard_type(data_type):
-            return False
+        # custom PostgreSQL types
 
-        # user-defined type registered with `conn.set_type_codec()`
-        return True
+        if is_standard_type(data_type):
+            raise TypeError(f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; got: PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`")
+
+        # user-defined types registered with `conn.set_type_codec()` are automatically accepted
 
 
 class _SQLPlaceholder:
@@ -238,7 +271,7 @@ class _SQLObject:
         # create a bit-field of types that require cast or serialization (1: apply conversion; 0: forward value as-is)
         cast = 0
         for index, data_type in enumerate(self.resultset_data_types):
-            cast |= (is_enum_type(data_type) or is_json_type(data_type)) << index
+            cast |= (is_enum_type(data_type) or is_json_type(data_type) or is_inet_type(data_type)) << index
         self.cast = cast
 
         self.converters = tuple(get_converter_for(data_type) for data_type in self.resultset_data_types)
@@ -484,8 +517,7 @@ class _SQLImpl(_SQL):
         stmt = await connection.prepare(self.sql.query())
 
         for attr, data_type in zip(stmt.get_attributes(), self.sql.resultset_data_types, strict=True):
-            if not check_data_type(attr.type.schema, attr.type.name, data_type):
-                raise TypeError(f"expected: {data_type} in column `{attr.name}`; got: `{attr.type.kind}` of `{attr.type.name}`")
+            check_data_type(attr, data_type)
 
         return stmt
 
