@@ -75,6 +75,8 @@ def sql(
 ) -> _SQL: ...
 ```
 
+#### Parameters to factory function
+
 The parameter `stmt` represents a SQL expression, either as a literal string or a template (i.e. a *t-string*).
 
 If the expression is a string, it can have PostgreSQL parameter placeholders such as `$1`, `$2` or `$3`:
@@ -89,10 +91,19 @@ If the expression is a *t-string*, it can have replacement fields that evaluate 
 t"INSERT INTO table_name (col_1, col_2, col_3) VALUES ({1}, {2}, {3});"
 ```
 
-The parameters `args` and `resultset` take a `tuple` of several types `Px` or `Rx`, each of which may be any of the following:
+The parameters `args` and `resultset` take a `tuple` of several types `Px` or `Rx`.
+
+The parameters `arg` and `result` take a single type `P` or `R`. Passing a simple type (e.g. `type[T]`) directly via `arg` and `result` is for convenience, and is equivalent to passing a one-element tuple of the same simple type (i.e. `type[tuple[T]]`) via `args` and `resultset`.
+
+The number of types in `args` must correspond to the number of query parameters. (This is validated on calling `sql(...)` for the *t-string* syntax.) The number of types in `resultset` must correspond to the number of columns returned by the query.
+
+#### Argument and resultset types
+
+When passing Python types via the parameters `args` and `resultset`, each type may be any of the following:
 
 * (required) simple type
 * optional simple type (`T | None`)
+* special union type
 
 Simple types include:
 
@@ -103,10 +114,21 @@ Simple types include:
 * `datetime.date`
 * `datetime.time`
 * `datetime.datetime`
+* `datetime.timedelta`
 * `str`
 * `bytes`
 * `uuid.UUID`
+* `IPv4Address`
+* `IPv6Address`
+* `IPv4Network`
+* `IPv6Network`
 * a user-defined class that derives from `StrEnum`
+
+Special union types are as follows:
+
+* `JsonType` to represent an object reconstructed from a JSON string
+* `IPv4Address | IPv6Address` to denote either an IPv4 or IPv6 address
+* `IPv4Network | IPv6Network` to denote either an IPv4 or IPv6 network definition
 
 Types are grouped together with `tuple`:
 
@@ -114,39 +136,60 @@ Types are grouped together with `tuple`:
 tuple[bool, int, str | None]
 ```
 
-The parameters `arg` and `result` take a single type `P` or `R`. Passing a simple type (e.g. `type[T]`) directly via `arg` and `result` is for convenience, and is equivalent to passing a one-element tuple of the same simple type (i.e. `type[tuple[T]]`) via `args` and `resultset`.
-
-The number of types in `args` must correspond to the number of query parameters. (This is validated on calling `sql(...)` for the *t-string* syntax.) The number of types in `resultset` must correspond to the number of columns returned by the query.
-
 Both `args` and `resultset` types must be compatible with their corresponding PostgreSQL query parameter types and resultset column types, respectively. The following table shows the mapping between PostgreSQL and Python types. When there are multiple options separated by a slash, either of the types can be specified as a source or target type.
 
-| PostgreSQL type   | Python type        |
-| ----------------- | ------------------ |
-| `bool`            | `bool`             |
-| `smallint`        | `int`              |
-| `integer`         | `int`              |
-| `bigint`          | `int`              |
-| `real`/`float4`   | `float`            |
-| `double`/`float8` | `float`            |
-| `decimal`         | `Decimal`          |
-| `numeric`         | `Decimal`          |
-| `date`            | `date`             |
-| `time`            | `time` (naive)     |
-| `timetz`          | `time` (tz)        |
-| `timestamp`       | `datetime` (naive) |
-| `timestamptz`     | `datetime` (tz)    |
-| `interval`        | `timedelta`        |
-| `char(N)`         | `str`              |
-| `varchar(N)`      | `str`              |
-| `text`            | `str`              |
-| `bytea`           | `bytes`            |
-| `json`            | `str`/`JsonType`   |
-| `jsonb`           | `str`/`JsonType`   |
-| `xml`             | `str`              |
-| `uuid`            | `UUID`             |
-| enumeration       | `E: StrEnum`       |
+| PostgreSQL type              | Python type                  |
+| ---------------------------- | ---------------------------- |
+| `bool`                       | `bool`                       |
+| `smallint`                   | `int`                        |
+| `integer`                    | `int`                        |
+| `bigint`                     | `int`                        |
+| `real`/`float4`              | `float`                      |
+| `double`/`float8`            | `float`                      |
+| `decimal`/`numeric`          | `Decimal`                    |
+| `date`                       | `date`                       |
+| `time`                       | `time` (naive)               |
+| `timetz`                     | `time` (tz)                  |
+| `timestamp`                  | `datetime` (naive)           |
+| `timestamptz`                | `datetime` (tz)              |
+| `interval`                   | `timedelta`                  |
+| `char(N)`                    | `str`                        |
+| `varchar(N)`                 | `str`                        |
+| `text`                       | `str`                        |
+| `bytea`                      | `bytes`                      |
+| `uuid`                       | `UUID`                       |
+| `cidr`                       | `IPvXNetwork`                |
+| `inet`                       | `IPvXNetwork`/`IPvXAddress`  |
+| `macaddr`                    | `str`                        |
+| `macaddr8`                   | `str`                        |
+| `json`                       | `str`/`JsonType`             |
+| `jsonb`                      | `str`/`JsonType`             |
+| `xml`                        | `str`                        |
+| enumeration                  | `E: StrEnum`                 |
 
-PostgreSQL types `json` and `jsonb` are [returned by asyncpg](https://magicstack.github.io/asyncpg/current/usage.html#type-conversion) as Python type `str`. However, if we specify the union type `JsonType` in `args` or `resultset`, the JSON string is parsed as if by calling `json.loads()`. (`JsonType` is defined in the module `asyncpg_typed`.) If the library `orjson` is present, its faster routines are invoked instead of the slower standard library implementation in the module `json`.
+PostgreSQL types `json` and `jsonb` are [returned by asyncpg](https://magicstack.github.io/asyncpg/current/usage.html#type-conversion) as Python type `str`. However, if we specify the union type `JsonType` in `args` or `resultset`, the JSON string is parsed as if by calling `json.loads()`. If the library `orjson` is present, its faster routines are invoked instead of the slower standard library implementation in the module `json`.
+
+`JsonType` is defined in the module `asyncpg_typed` as follows:
+
+```python
+JsonType = None | bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
+```
+
+`IPvXNetwork` is a shorthand for either of the following:
+
+* `IPv4Network`
+* `IPv6Network`
+* their union type `IPv4Network | IPv6Network`
+
+`IPvXAddress` stands for either of the following:
+
+* `IPv4Address`
+* `IPv6Address`
+* their union type `IPv4Address | IPv6Address`
+
+#### SQL statement as an f-string
+
+In addition to the `sql` function, SQL objects can be created with the functionally identical `unsafe_sql` function. As opposed to its safer alternative, the first parameter of `unsafe_sql` has the plain type `str`, allowing us to pass an f-string. This can prove useful if we want to inject the value of a Python variable at location where binding parameters are not permitted by PostgreSQL syntax, e.g. substitute the name of a database table to dynamically create a SQL statement.
 
 ### Using a SQL object
 
@@ -172,4 +215,8 @@ Only those functions are prompted on code completion that make sense in the cont
 
 ## Run-time behavior
 
-When a call such as `sql.executemany(conn, records)` or `sql.fetch(conn, param1, param2)` is made on a `SQL` object at run time, the library invokes `connection.prepare(sql)` to create a `PreparedStatement` and compares the actual statement signature against the expected Python types. Unfortunately, PostgreSQL doesn't propagate nullability via prepared statements: resultset types that are declared as required (e.g. `T` as opposed to `T | None`) are validated at run time.
+When a call such as `sql.executemany(conn, records)` or `sql.fetch(conn, param1, param2)` is made on a `SQL` object at run time, the library invokes `connection.prepare(sql)` to create a `PreparedStatement` and compares the actual statement signature against the expected Python types. If the expected and actual signatures don't match, an exception `TypeMismatchError` (subclass of `TypeError`) is raised.
+
+Unfortunately, PostgreSQL doesn't propagate nullability via prepared statements: resultset types that are declared as required (e.g. `T` as opposed to `T | None`) are validated at run time. When a `None` value is encountered for a required type, an exception `NoneTypeError` (subclass of `TypeError`) is raised.
+
+PostgreSQL doesn't differentiate between IPv4 and IPv6 network definitions, or IPv4 and IPv6 addresses in the types `cidr` and `inet`. This means that semantically a union type is returned. If you specify a more restrictive type, the resultset data is validated dynamically at run time.

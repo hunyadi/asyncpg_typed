@@ -39,6 +39,15 @@ RequiredJsonType = bool | int | float | str | dict[str, "JsonType"] | list["Json
 
 TargetType: TypeAlias = type[Any] | UnionType
 
+
+class TypeMismatchError(TypeError):
+    "Raised when a prepared statement returns a PostgreSQL type incompatible with the declared Python type."
+
+
+class NoneTypeError(TypeError):
+    "Raised when a column marked as required contains a `NULL` value."
+
+
 if sys.version_info >= (3, 11):
 
     def is_enum_type(typ: object) -> bool:
@@ -212,13 +221,13 @@ def check_data_type(attr: asyncpg.Attribute, data_type: TargetType) -> None:
         name = attr.type.name
         if is_enum_type(data_type):
             if name not in ["bpchar", "varchar", "text"]:
-                raise TypeError(f"expected: Python enumeration type `{type_to_str(data_type)}` for column `{attr.name}`; got: PostgreSQL type `{attr.type.kind}` of `{attr.type.name}` instead of `char`, `varchar` or `text`")
+                raise TypeMismatchError(f"expected: Python enumeration type `{type_to_str(data_type)}` for column `{attr.name}`; got: PostgreSQL type `{attr.type.kind}` of `{attr.type.name}` instead of `char`, `varchar` or `text`")
         else:
             expected_types = _name_to_type.get(name)
             if expected_types is None:
-                raise TypeError(f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; got: unrecognized PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`")
+                raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; got: unrecognized PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`")
             elif data_type not in expected_types:
-                raise TypeError(
+                raise TypeMismatchError(
                     f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; "
                     f"got: incompatible PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`, which converts to one of the Python types {', '.join(f'`{type_to_str(tp)}`' for tp in expected_types)}"
                 )
@@ -226,7 +235,7 @@ def check_data_type(attr: asyncpg.Attribute, data_type: TargetType) -> None:
         # custom PostgreSQL types
 
         if is_standard_type(data_type):
-            raise TypeError(f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; got: PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`")
+            raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; got: PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`")
 
         # user-defined types registered with `conn.set_type_codec()` are automatically accepted
 
@@ -287,7 +296,7 @@ class _SQLObject:
                     row_col_spec = f"row #{row_index} and column #{col_index}"
                 else:
                     row_col_spec = f"column #{col_index}"
-                raise TypeError(f"expected: {self.resultset_data_types[col_index]} in {row_col_spec}; got: NULL")
+                raise NoneTypeError(f"expected: {self.resultset_data_types[col_index]} in {row_col_spec}; got: NULL")
 
     def check_rows(self, rows: list[tuple[Any, ...]]) -> None:
         """
@@ -395,7 +404,7 @@ class _SQLObject:
         """
 
         if self.required and value is None:
-            raise TypeError(f"expected: {self.resultset_data_types[0]}; got: NULL")
+            raise NoneTypeError(f"expected: {self.resultset_data_types[0]}; got: NULL")
 
     @abstractmethod
     def query(self) -> str:
