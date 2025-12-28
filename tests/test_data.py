@@ -20,11 +20,24 @@ if sys.version_info < (3, 11):
     class State(str, enum.Enum):
         ACTIVE = "active"
         INACTIVE = "inactive"
+
+    class Suit(str, enum.Enum):
+        SPADES = "spades"
+        HEARTS = "hearts"
+        DIAMONDS = "diamonds"
+        CLUBS = "clubs"
+
 else:
 
     class State(enum.StrEnum):
         ACTIVE = "active"
         INACTIVE = "inactive"
+
+    class Suit(enum.StrEnum):
+        SPADES = "spades"
+        HEARTS = "hearts"
+        DIAMONDS = "diamonds"
+        CLUBS = "clubs"
 
 
 class TestDataTypes(unittest.IsolatedAsyncioTestCase):
@@ -398,7 +411,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             await insert_sql.execute(conn, *record)
             self.assertEqual(await select_sql.fetch(conn), [record])
 
-    async def test_enum_type(self) -> None:
+    async def test_str_enum_type(self) -> None:
         create_sql = sql(
             """
             --sql
@@ -409,12 +422,12 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             END $$;
 
             --sql
-            CREATE TEMPORARY TABLE enum_types(
+            CREATE TEMPORARY TABLE str_enum_types(
                 id bigint GENERATED ALWAYS AS IDENTITY,
                 enum_value state NOT NULL,
                 string_value varchar(64) NOT NULL,
                 text_value text NOT NULL,
-                CONSTRAINT pk_sample_data PRIMARY KEY (id)
+                CONSTRAINT pk_str_enum_types PRIMARY KEY (id)
             );
             """
         )
@@ -422,7 +435,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
         insert_sql = sql(
             """
             --sql
-            INSERT INTO enum_types (enum_value, string_value, text_value)
+            INSERT INTO str_enum_types (enum_value, string_value, text_value)
             VALUES ($1, $2, $3);
             """,
             args=tuple[State, State, State],
@@ -432,7 +445,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             """
             --sql
             SELECT enum_value, enum_value, string_value, string_value, text_value, text_value
-            FROM enum_types
+            FROM str_enum_types
             ORDER BY id;
             """,
             resultset=tuple[State, State | None, State, State | None, State, State | None],
@@ -442,7 +455,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             """
             --sql
             SELECT enum_value
-            FROM enum_types
+            FROM str_enum_types
             ORDER BY id;
             """,
             result=State,
@@ -468,6 +481,51 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             value = await value_sql.fetchval(conn)
             self.assertIsInstance(value, State)
             self.assertEqual(value, State.ACTIVE)
+
+    async def test_enum_type(self) -> None:
+        create_sql = sql(
+            """
+            --sql
+            DO $$ BEGIN
+                CREATE TYPE suit AS ENUM ('spades', 'hearts', 'diamonds', 'clubs');
+            EXCEPTION
+                WHEN duplicate_object THEN null;
+            END $$;
+
+            --sql
+            CREATE TEMPORARY TABLE enum_types(
+                id bigint GENERATED ALWAYS AS IDENTITY,
+                enum_value suit NOT NULL,
+                CONSTRAINT pk_enum_types PRIMARY KEY (id)
+            );
+            """
+        )
+
+        insert_sql = sql(
+            """
+            --sql
+            INSERT INTO enum_types (enum_value) VALUES ($1);
+            """,
+            arg=Suit,
+        )
+
+        select_sql = sql(
+            """
+            --sql
+            SELECT enum_value FROM enum_types ORDER BY id;
+            """,
+            result=Suit,
+        )
+
+        async with get_connection() as conn:
+            await create_sql.execute(conn)
+            await insert_sql.executemany(conn, [(Suit.SPADES,), (Suit.HEARTS,), (Suit.DIAMONDS,), (Suit.CLUBS,)])
+
+            rows = await select_sql.fetch(conn)
+            for row in rows:
+                for column in row:
+                    self.assertIsInstance(column, Suit)
+            self.assertEqual(rows, [(Suit.SPADES,), (Suit.HEARTS,), (Suit.DIAMONDS,), (Suit.CLUBS,)])
 
 
 if __name__ == "__main__":

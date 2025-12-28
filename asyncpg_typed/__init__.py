@@ -22,7 +22,7 @@ from functools import reduce
 from io import StringIO
 from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
 from types import UnionType
-from typing import Any, Protocol, TypeAlias, TypeVar, Union, get_args, get_origin, overload
+from typing import Any, Protocol, TypeAlias, TypeGuard, TypeVar, Union, get_args, get_origin, overload
 from uuid import UUID
 
 import asyncpg
@@ -39,6 +39,8 @@ RequiredJsonType = bool | int | float | str | dict[str, "JsonType"] | list["Json
 
 TargetType: TypeAlias = type[Any] | UnionType
 
+Connection: TypeAlias = asyncpg.Connection | asyncpg.pool.PoolConnectionProxy
+
 
 class TypeMismatchError(TypeError):
     "Raised when a prepared statement returns a PostgreSQL type incompatible with the declared Python type."
@@ -50,7 +52,7 @@ class NoneTypeError(TypeError):
 
 if sys.version_info >= (3, 11):
 
-    def is_enum_type(typ: object) -> bool:
+    def is_enum_type(typ: Any) -> TypeGuard[type[enum.Enum]]:
         """
         `True` if the specified type is an enumeration type.
         """
@@ -59,7 +61,7 @@ if sys.version_info >= (3, 11):
 
 else:
 
-    def is_enum_type(typ: object) -> bool:
+    def is_enum_type(typ: Any) -> TypeGuard[type[enum.Enum]]:
         """
         `True` if the specified type is an enumeration type.
         """
@@ -210,34 +212,55 @@ def type_to_str(tp: Any) -> str:
         return str(tp)
 
 
-def check_data_type(attr: asyncpg.Attribute, data_type: TargetType) -> None:
+async def _check_enum_type(conn: Connection, pg_name: str, pg_type: asyncpg.Type, data_type: type[enum.Enum]) -> None:
+    """
+    Verifies if a Python enumeration type matches a PostgreSQL enumeration type.
+    """
+
+    for e in data_type:
+        if not isinstance(e.value, str):
+            raise TypeMismatchError(f"expected: Python enum type `{type_to_str(data_type)}` with `str` values; got: `{type_to_str(type(e.value))}` for enum field `{e.name}`")
+
+    py_values = set(e.value for e in data_type)
+
+    rows = await conn.fetch(f"SELECT enumlabel FROM pg_enum WHERE enumtypid = {pg_type.oid} ORDER BY enumsortorder;")
+    db_values = set(row[0] for row in rows)
+
+    db_extra = db_values - py_values
+    if db_extra:
+        raise TypeMismatchError(f"expected: Python enum type `{type_to_str(data_type)}` to match values of PostgreSQL enum type `{pg_type.name}` for {pg_name}; missing value(s): {', '.join(f'`{val}`' for val in db_extra)})")
+
+    py_extra = py_values - db_values
+    if py_extra:
+        raise TypeMismatchError(f"expected: Python enum type `{type_to_str(data_type)}` to match values of PostgreSQL enum type `{pg_type.name}` for {pg_name}; got extra value(s): {', '.join(f'`{val}`' for val in py_extra)})")
+
+
+async def _check_data_type(conn: Connection, pg_name: str, pg_type: asyncpg.Type, data_type: TargetType) -> None:
     """
     Verifies if the Python target type can represent the PostgreSQL source type.
     """
 
-    if attr.type.schema == "pg_catalog":
-        # well-known PostgreSQL types
-
-        name = attr.type.name
+    if pg_type.schema == "pg_catalog":  # well-known PostgreSQL types
         if is_enum_type(data_type):
-            if name not in ["bpchar", "varchar", "text"]:
-                raise TypeMismatchError(f"expected: Python enumeration type `{type_to_str(data_type)}` for column `{attr.name}`; got: PostgreSQL type `{attr.type.kind}` of `{attr.type.name}` instead of `char`, `varchar` or `text`")
+            if pg_type.name not in ["bpchar", "varchar", "text"]:
+                raise TypeMismatchError(f"expected: Python enum type `{type_to_str(data_type)}` for {pg_name}; got: PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` instead of `char`, `varchar` or `text`")
         else:
-            expected_types = _name_to_type.get(name)
+            expected_types = _name_to_type.get(pg_type.name)
             if expected_types is None:
-                raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; got: unrecognized PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`")
+                raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; got: unrecognized PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`")
             elif data_type not in expected_types:
                 raise TypeMismatchError(
-                    f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; "
-                    f"got: incompatible PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`, which converts to one of the Python types {', '.join(f'`{type_to_str(tp)}`' for tp in expected_types)}"
+                    f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; "
+                    f"got: incompatible PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`, which converts to one of the Python types {', '.join(f'`{type_to_str(tp)}`' for tp in expected_types)}"
                 )
-    else:
-        # custom PostgreSQL types
-
-        if is_standard_type(data_type):
-            raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for column `{attr.name}`; got: PostgreSQL type `{attr.type.kind}` of `{attr.type.name}`")
-
-        # user-defined types registered with `conn.set_type_codec()` are automatically accepted
+    else:  # custom PostgreSQL types
+        if is_enum_type(data_type):
+            await _check_enum_type(conn, pg_name, pg_type, data_type)
+        elif is_standard_type(data_type):
+            raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; got: PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`")
+        else:
+            # user-defined types registered with `conn.set_type_codec()` are automatically accepted
+            pass
 
 
 class _SQLPlaceholder:
@@ -503,9 +526,6 @@ class _SQL(Protocol):
     """
 
 
-Connection: TypeAlias = asyncpg.Connection | asyncpg.pool.PoolConnectionProxy
-
-
 class _SQLImpl(_SQL):
     """
     Forwards input data to an `asyncpg.PreparedStatement`, and validates output data (if necessary).
@@ -525,8 +545,10 @@ class _SQLImpl(_SQL):
     async def _prepare(self, connection: Connection) -> PreparedStatement:
         stmt = await connection.prepare(self.sql.query())
 
+        for param, placeholder in zip(stmt.get_parameters(), self.sql.parameter_data_types, strict=True):
+            await _check_data_type(connection, f"parameter ${placeholder.ordinal}", param, placeholder.data_type)
         for attr, data_type in zip(stmt.get_attributes(), self.sql.resultset_data_types, strict=True):
-            check_data_type(attr, data_type)
+            await _check_data_type(connection, f"column `{attr.name}`", attr.type, data_type)
 
         return stmt
 

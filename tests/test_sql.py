@@ -129,7 +129,7 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
                 $1::int,  $2::int,  $3::int,  $4::int,  $5::int,  $6::int,  $7::int,  $8::int,
                 $9::int, $10::int, $11::int, $12::int, $13::int, $14::int, $15::int, $16::int;
             """,
-            args=tuple[int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int],
+            args=tuple[int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int],
             resultset=tuple[int, int, int, int, int, int, int, int, int, int, int, int, int, int, int, int],
         )
 
