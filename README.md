@@ -138,34 +138,48 @@ tuple[bool, int, str | None]
 
 Both `args` and `resultset` types must be compatible with their corresponding PostgreSQL query parameter types and resultset column types, respectively. The following table shows the mapping between PostgreSQL and Python types. When there are multiple options separated by a slash, either of the types can be specified as a source or target type.
 
-| PostgreSQL type              | Python type                  |
-| ---------------------------- | ---------------------------- |
-| `bool`                       | `bool`                       |
-| `smallint`                   | `int`                        |
-| `integer`                    | `int`                        |
-| `bigint`                     | `int`                        |
-| `real`/`float4`              | `float`                      |
-| `double`/`float8`            | `float`                      |
-| `decimal`/`numeric`          | `Decimal`                    |
-| `date`                       | `date`                       |
-| `time`                       | `time` (naive)               |
-| `timetz`                     | `time` (tz)                  |
-| `timestamp`                  | `datetime` (naive)           |
-| `timestamptz`                | `datetime` (tz)              |
-| `interval`                   | `timedelta`                  |
-| `char(N)`                    | `str`                        |
-| `varchar(N)`                 | `str`                        |
-| `text`                       | `str`                        |
-| `bytea`                      | `bytes`                      |
-| `uuid`                       | `UUID`                       |
-| `cidr`                       | `IPvXNetwork`                |
-| `inet`                       | `IPvXNetwork`/`IPvXAddress`  |
-| `macaddr`                    | `str`                        |
-| `macaddr8`                   | `str`                        |
-| `json`                       | `str`/`JsonType`             |
-| `jsonb`                      | `str`/`JsonType`             |
-| `xml`                        | `str`                        |
-| enumeration                  | `E: StrEnum`                 |
+| PostgreSQL type              | Python type                        |
+| ---------------------------- | ---------------------------------- |
+| `bool`                       | `bool`                             |
+| `smallint`                   | `int`                              |
+| `integer`                    | `int`                              |
+| `bigint`                     | `int`                              |
+| `real`/`float4`              | `float`                            |
+| `double`/`float8`            | `float`                            |
+| `decimal`/`numeric`          | `Decimal`                          |
+| `date`                       | `date`                             |
+| `time`                       | `time` (naive)                     |
+| `timetz`                     | `time` (tz)                        |
+| `timestamp`                  | `datetime` (naive)                 |
+| `timestamptz`                | `datetime` (tz)                    |
+| `interval`                   | `timedelta`                        |
+| `char(N)`                    | `str`                              |
+| `varchar(N)`                 | `str`                              |
+| `text`                       | `str`                              |
+| `bytea`                      | `bytes`                            |
+| `uuid`                       | `UUID`                             |
+| `cidr`                       | `IPvXNetwork`                      |
+| `inet`                       | `IPvXNetwork`/`IPvXAddress`        |
+| `macaddr`                    | `str`                              |
+| `macaddr8`                   | `str`                              |
+| `json`                       | `str`/`JsonType`                   |
+| `jsonb`                      | `str`/`JsonType`                   |
+| `xml`                        | `str`                              |
+| any enumeration type         | `E: StrEnum`                       |
+| `point`                      | `asyncpg.Point`                    |
+| `line`                       | `asyncpg.Line`                     |
+| `lseg`                       | `asyncpg.LineSegment`              |
+| `box`                        | `asyncpg.Box`                      |
+| `path`                       | `asyncpg.Path`                     |
+| `polygon`                    | `asyncpg.Polygon`                  |
+| `circle`                     | `asyncpg.Circle`                   |
+| `int4range`                  | `asyncpg.Range[int]`               |
+| `int8range`                  | `asyncpg.Range[int]`               |
+| `numrange`                   | `asyncpg.Range[Decimal]`           |
+| `tsrange`                    | `asyncpg.Range[datetime]` (naive)  |
+| `tstzrange`                  | `asyncpg.Range[datetime]` (tz)     |
+| `daterange`                  | `asyncpg.Range[date]`              |
+
 
 PostgreSQL types `json` and `jsonb` are [returned by asyncpg](https://magicstack.github.io/asyncpg/current/usage.html#type-conversion) as Python type `str`. However, if we specify the union type `JsonType` in `args` or `resultset`, the JSON string is parsed as if by calling `json.loads()`. If the library `orjson` is present, its faster routines are invoked instead of the slower standard library implementation in the module `json`.
 
@@ -218,5 +232,7 @@ Only those functions are prompted on code completion that make sense in the cont
 When a call such as `sql.executemany(conn, records)` or `sql.fetch(conn, param1, param2)` is made on a `SQL` object at run time, the library invokes `connection.prepare(sql)` to create a `PreparedStatement` and compares the actual statement signature against the expected Python types. If the expected and actual signatures don't match, an exception `TypeMismatchError` (subclass of `TypeError`) is raised.
 
 Unfortunately, PostgreSQL doesn't propagate nullability via prepared statements: resultset types that are declared as required (e.g. `T` as opposed to `T | None`) are validated at run time. When a `None` value is encountered for a required type, an exception `NoneTypeError` (subclass of `TypeError`) is raised.
+
+The set of values for an enumeration type is validated when a prepared statement is created. The string values declared in a Python `StrEnum` are compared against the values listed in PostgreSQL `CREATE TYPE ... AS ENUM` by querying the system table `pg_enum`.
 
 PostgreSQL doesn't differentiate between IPv4 and IPv6 network definitions, or IPv4 and IPv6 addresses in the types `cidr` and `inet`. This means that semantically a union type is returned. If you specify a more restrictive type, the resultset data is validated dynamically at run time.

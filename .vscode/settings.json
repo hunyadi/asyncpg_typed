@@ -20,6 +20,7 @@
         "bpchar",
         "bytea",
         "dataclass",
+        "daterange",
         "errorlevel",
         "executemany",
         "fetchmany",
@@ -28,8 +29,10 @@
         "halfvec",
         "Hunyadi",
         "Levente",
+        "lseg",
         "macaddr",
         "mypy",
+        "numrange",
         "resultset",
         "setlocal",
         "setuptools",
@@ -38,6 +41,8 @@
         "timedelta",
         "timestamptz",
         "timetz",
+        "tsrange",
+        "tstzrange",
         "varchar"
     ]
 }

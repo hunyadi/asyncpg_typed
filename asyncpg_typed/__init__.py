@@ -175,31 +175,55 @@ def get_converter_for(tp: Any) -> Callable[[Any], Any]:
 
 # maps PostgreSQL internal type names to compatible Python types
 _name_to_type: dict[str, tuple[Any, ...]] = {
+    # boolean type
     "bool": (bool,),
+    # numeric types
     "int2": (int,),
     "int4": (int,),
     "int8": (int,),
     "float4": (float,),
     "float8": (float,),
     "numeric": (Decimal,),
+    # date and time types
     "date": (date,),
     "time": (time,),
     "timetz": (time,),
     "timestamp": (datetime,),
     "timestamptz": (datetime,),
     "interval": (timedelta,),
+    # character sequence types
     "bpchar": (str,),
     "varchar": (str,),
     "text": (str,),
+    # binary sequence types
     "bytea": (bytes,),
+    # unique identifier type
+    "uuid": (UUID,),
+    # address types
     "cidr": (IPv4Network, IPv6Network, IPv4Network | IPv6Network),
     "inet": (IPv4Network, IPv6Network, IPv4Network | IPv6Network, IPv4Address, IPv6Address, IPv4Address | IPv6Address),
     "macaddr": (str,),
     "macaddr8": (str,),
+    # JSON type
     "json": (str, RequiredJsonType),
     "jsonb": (str, RequiredJsonType),
-    "uuid": (UUID,),
+    # XML type
     "xml": (str,),
+    # geometric types
+    "point": (asyncpg.Point,),
+    "line": (asyncpg.Line,),
+    "lseg": (asyncpg.LineSegment,),
+    "box": (asyncpg.Box,),
+    "path": (asyncpg.Path,),
+    "polygon": (asyncpg.Polygon,),
+    "circle": (asyncpg.Circle,),
+    # range types
+    "int4range": (asyncpg.Range[int],),
+    "int8range": (asyncpg.Range[int],),
+    "numrange": (asyncpg.Range[Decimal],),
+    "tsrange": (asyncpg.Range[datetime],),
+    "tstzrange": (asyncpg.Range[datetime],),
+    "daterange": (asyncpg.Range[date],),
 }
 
 
@@ -223,7 +247,7 @@ async def _check_enum_type(conn: Connection, pg_name: str, pg_type: asyncpg.Type
 
     py_values = set(e.value for e in data_type)
 
-    rows = await conn.fetch(f"SELECT enumlabel FROM pg_enum WHERE enumtypid = {pg_type.oid} ORDER BY enumsortorder;")
+    rows = await conn.fetch("SELECT enumlabel FROM pg_enum WHERE enumtypid = $1 ORDER BY enumsortorder;", pg_type.oid)
     db_values = set(row[0] for row in rows)
 
     db_extra = db_values - py_values

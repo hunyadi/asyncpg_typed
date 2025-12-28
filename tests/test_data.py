@@ -12,6 +12,8 @@ from decimal import Decimal
 from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
 from uuid import UUID, uuid4
 
+import asyncpg
+
 from asyncpg_typed import JsonType, sql
 from tests.connection import get_connection
 
@@ -526,6 +528,109 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
                 for column in row:
                     self.assertIsInstance(column, Suit)
             self.assertEqual(rows, [(Suit.SPADES,), (Suit.HEARTS,), (Suit.DIAMONDS,), (Suit.CLUBS,)])
+
+    async def test_geometric_types(self) -> None:
+        create_sql = sql(
+            """
+            --sql
+            CREATE TEMPORARY TABLE geometric_types(
+                id bigint GENERATED ALWAYS AS IDENTITY,
+                point_value point,
+                line_value line,
+                segment_value lseg,
+                box_value box,
+                path_value path,
+                polygon_value polygon,
+                circle_value circle,
+                CONSTRAINT pk_geometric_types PRIMARY KEY (id)
+            );
+            """
+        )
+
+        insert_sql = sql(
+            """
+            --sql
+            INSERT INTO geometric_types (point_value, line_value, segment_value, box_value, path_value, polygon_value, circle_value)
+            VALUES ($1, $2, $3, $4, $5, $6, $7);
+            """,
+            args=tuple[asyncpg.Point, asyncpg.Line, asyncpg.LineSegment, asyncpg.Box, asyncpg.Path, asyncpg.Polygon, asyncpg.Circle],
+        )
+
+        select_sql = sql(
+            """
+            --sql
+            SELECT point_value, line_value, segment_value, box_value, path_value, polygon_value, circle_value
+            FROM geometric_types
+            ORDER BY id;
+            """,
+            resultset=tuple[asyncpg.Point, asyncpg.Line, asyncpg.LineSegment, asyncpg.Box, asyncpg.Path, asyncpg.Polygon, asyncpg.Circle],
+        )
+
+        async with get_connection() as conn:
+            await create_sql.execute(conn)
+            record = (
+                asyncpg.Point(1.5, 2.5),
+                asyncpg.Line(1.5, 2.5, 3.5),
+                asyncpg.LineSegment(asyncpg.Point(1.5, 2.5), asyncpg.Point(3.5, 4.5)),
+                asyncpg.Box(asyncpg.Point(0.25, 0.75), asyncpg.Point(-0.25, -0.75)),
+                asyncpg.Path(asyncpg.Point(0, 0), asyncpg.Point(0, 1), asyncpg.Point(1, 1), asyncpg.Point(1, 0), is_closed=True),
+                asyncpg.Polygon(asyncpg.Point(0, 0), asyncpg.Point(0, 1), asyncpg.Point(1, 1), asyncpg.Point(1, 0)),
+                asyncpg.Circle(asyncpg.Point(1.5, 2.5), 3.5),
+            )
+            await insert_sql.executemany(conn, [record])
+            self.assertEqual(await select_sql.fetch(conn), [record])
+
+    async def test_range_types(self) -> None:
+        create_sql = sql(
+            """
+            --sql
+            CREATE TEMPORARY TABLE range_types(
+                id bigint GENERATED ALWAYS AS IDENTITY,
+                int_range int4range,
+                big_range int8range,
+                decimal_range numrange,
+                date_time_range tsrange,
+                date_time_zone_range tstzrange,
+                date_range daterange,
+                CONSTRAINT pk_range_types PRIMARY KEY (id)
+            );
+            """
+        )
+
+        insert_sql = sql(
+            """
+            --sql
+            INSERT INTO range_types (int_range, big_range, decimal_range, date_time_range, date_time_zone_range, date_range)
+            VALUES ($1, $2, $3, $4, $5, $6);
+            """,
+            args=tuple[asyncpg.Range[int], asyncpg.Range[int], asyncpg.Range[Decimal], asyncpg.Range[datetime], asyncpg.Range[datetime], asyncpg.Range[date]],
+        )
+
+        select_sql = sql(
+            """
+            --sql
+            SELECT int_range, big_range, decimal_range, date_time_range, date_time_zone_range, date_range
+            FROM range_types
+            ORDER BY id;
+            """,
+            resultset=tuple[asyncpg.Range[int], asyncpg.Range[int], asyncpg.Range[Decimal], asyncpg.Range[datetime], asyncpg.Range[datetime], asyncpg.Range[date]],
+        )
+
+        cet = timezone(timedelta(hours=1), "Europe/Budapest")
+        async with get_connection() as conn:
+            await create_sql.execute(conn)
+            record = (
+                asyncpg.Range[int](-2_147_483_648, 2_147_483_647),
+                asyncpg.Range[int](-9_223_372_036_854_775_808, 9_223_372_036_854_775_807),
+                asyncpg.Range[Decimal](Decimal("-0.99"), Decimal("1.00")),
+                asyncpg.Range[datetime](datetime(1984, 1, 1, 0, 0, 0), datetime(1990, 10, 23, 23, 59, 59)),
+                asyncpg.Range[datetime](datetime(1984, 1, 1, 0, 0, 0, tzinfo=cet), datetime(1990, 10, 23, 23, 59, 59, tzinfo=cet)),
+                asyncpg.Range[date](date(1984, 1, 1), date(1990, 10, 23)),
+            )
+            await insert_sql.executemany(conn, [record])
+            self.assertEqual(await select_sql.fetch(conn), [record])
+
+            asyncpg.Range[int]()
 
 
 if __name__ == "__main__":
