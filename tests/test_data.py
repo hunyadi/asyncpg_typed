@@ -12,7 +12,7 @@ from decimal import Decimal
 from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
 from uuid import UUID, uuid4
 
-import asyncpg
+from asyncpg import Box, Circle, Line, LineSegment, Path, Point, Polygon, Range
 
 from asyncpg_typed import JsonType, sql
 from tests.connection import get_connection
@@ -125,16 +125,26 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
 
         async with get_connection() as conn:
             await create_sql.execute(conn)
-            record = (
-                date.today(),
-                time(23, 59, 59, tzinfo=None),
-                time(23, 59, 59, tzinfo=timezone(timedelta(hours=1), "Europe/Budapest")),
-                datetime.now(tz=None),
-                datetime.now(tz=timezone.utc),
-                timedelta(days=12, hours=23, minutes=59, seconds=59),
-            )
-            await insert_sql.executemany(conn, [record])
-            self.assertEqual(await select_sql.fetch(conn), [record])
+            records = [
+                (
+                    date.today(),
+                    time(0, 0, 0, tzinfo=None),
+                    time(23, 59, 59, tzinfo=timezone.utc),
+                    datetime.now(tz=None),
+                    datetime.now(tz=timezone.utc),
+                    timedelta(days=12, hours=23, minutes=59, seconds=59),
+                ),
+                (
+                    date.today(),
+                    time(23, 59, 59, tzinfo=None),
+                    time(0, 0, 0, tzinfo=timezone(timedelta(hours=1), "Europe/Budapest")),
+                    datetime.now(tz=None),
+                    datetime.now(tz=timezone.utc),
+                    timedelta(days=12, hours=23, minutes=59, seconds=59),
+                ),
+            ]
+            await insert_sql.executemany(conn, records)
+            self.assertEqual(await select_sql.fetch(conn), records)
 
     async def test_sequence_types(self) -> None:
         create_sql = sql(
@@ -175,6 +185,40 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             record = (b"zero", "four", "twenty-three", "a long string")
             await insert_sql.executemany(conn, [record])
             self.assertEqual(await select_sql.fetch(conn), [record])
+
+    async def test_uuid_type(self) -> None:
+        create_sql = sql(
+            """
+            --sql
+            CREATE TEMPORARY TABLE uuid_type(
+                id bigint GENERATED ALWAYS AS IDENTITY,
+                uuid_value uuid NOT NULL,
+                CONSTRAINT pk_uuid_type PRIMARY KEY (id)
+            );
+            """
+        )
+
+        insert_sql = sql(
+            """
+            --sql
+            INSERT INTO uuid_type (uuid_value) VALUES ($1);
+            """,
+            arg=UUID,
+        )
+
+        select_sql = sql(
+            """
+            --sql
+            SELECT uuid_value FROM uuid_type ORDER BY id;
+            """,
+            result=UUID,
+        )
+
+        async with get_connection() as conn:
+            await create_sql.execute(conn)
+            records = [(uuid4(),), (uuid4(),), (uuid4(),), (uuid4(),)]
+            await insert_sql.executemany(conn, records)
+            self.assertEqual(await select_sql.fetch(conn), records)
 
     async def test_inet_type(self) -> None:
         create_sql = sql(
@@ -310,7 +354,6 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             --sql
             CREATE TEMPORARY TABLE json_type(
                 id bigint GENERATED ALWAYS AS IDENTITY,
-                uuid_value uuid NOT NULL,
                 json_value json,
                 jsonb_value jsonb NOT NULL,
                 CONSTRAINT pk_json_type PRIMARY KEY (id)
@@ -321,57 +364,80 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
         insert_str_sql = sql(
             """
             --sql
-            INSERT INTO json_type (uuid_value, json_value, jsonb_value)
-            VALUES ($1, $2, $3);
+            INSERT INTO json_type (json_value, jsonb_value)
+            VALUES ($1, $2);
             """,
-            args=tuple[UUID, str | None, str],
+            args=tuple[str | None, str],
         )
 
         insert_json_sql = sql(
             """
             --sql
-            INSERT INTO json_type (uuid_value, json_value, jsonb_value)
-            VALUES ($1, $2, $3);
+            INSERT INTO json_type (json_value, jsonb_value)
+            VALUES ($1, $2);
             """,
-            args=tuple[UUID, JsonType, JsonType],
+            args=tuple[JsonType, JsonType],
         )
 
-        select_sql = sql(
+        select_str_sql = sql(
             """
             --sql
-            SELECT uuid_value, json_value, jsonb_value, jsonb_value
+            SELECT json_value, jsonb_value
             FROM json_type
             ORDER BY id;
             """,
-            resultset=tuple[UUID, str | None, str, JsonType],
+            resultset=tuple[str | None, str],
+        )
+
+        select_json_sql = sql(
+            """
+            --sql
+            SELECT json_value, jsonb_value
+            FROM json_type
+            ORDER BY id;
+            """,
+            resultset=tuple[JsonType, JsonType],
         )
 
         async with get_connection() as conn:
             await create_sql.execute(conn)
-            uuid_1, uuid_2, uuid_3, uuid_4 = uuid4(), uuid4(), uuid4(), uuid4()
+
             pretty_json = '{\n"key": [ true, "value", 3 ]\n}'
             standard_json = '{"key": [true, "value", 3]}'
+            compact_json = '{"key":[true,"value",3]}'
+            json_value: JsonType = {"key": [True, "value", 3]}
             await insert_str_sql.executemany(
                 conn,
                 [
-                    (uuid_1, pretty_json, pretty_json),
-                    (uuid_2, None, "[{}]"),
+                    (pretty_json, pretty_json),
+                    (None, "[{}]"),
                 ],
             )
             await insert_json_sql.executemany(
                 conn,
                 [
-                    (uuid_3, pretty_json, pretty_json),
-                    (uuid_4, None, "[{}]"),
+                    (json_value, json_value),
+                    (None, [{}]),
                 ],
             )
             self.assertEqual(
-                await select_sql.fetch(conn),
+                await select_str_sql.fetch(conn),
                 [
-                    (uuid_1, pretty_json, standard_json, {"key": [True, "value", 3]}),
-                    (uuid_2, None, "[{}]", [{}]),
-                    (uuid_3, pretty_json, standard_json, {"key": [True, "value", 3]}),
-                    (uuid_4, None, "[{}]", [{}]),
+                    # PostgreSQL `json` preserves whitespace, `jsonb` converts to standard representation
+                    (pretty_json, standard_json),
+                    (None, "[{}]"),
+                    # when Python `JsonType` is serialized, it uses the most compact representation, which is retained by `json` but not `jsonb`
+                    (compact_json, standard_json),
+                    (None, "[{}]"),
+                ],
+            )
+            self.assertEqual(
+                await select_json_sql.fetch(conn),
+                [
+                    (json_value, json_value),
+                    (None, [{}]),
+                    (json_value, json_value),
+                    (None, [{}]),
                 ],
             )
 
@@ -553,7 +619,7 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             INSERT INTO geometric_types (point_value, line_value, segment_value, box_value, path_value, polygon_value, circle_value)
             VALUES ($1, $2, $3, $4, $5, $6, $7);
             """,
-            args=tuple[asyncpg.Point, asyncpg.Line, asyncpg.LineSegment, asyncpg.Box, asyncpg.Path, asyncpg.Polygon, asyncpg.Circle],
+            args=tuple[Point, Line, LineSegment, Box, Path, Polygon, Circle],
         )
 
         select_sql = sql(
@@ -563,19 +629,19 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             FROM geometric_types
             ORDER BY id;
             """,
-            resultset=tuple[asyncpg.Point, asyncpg.Line, asyncpg.LineSegment, asyncpg.Box, asyncpg.Path, asyncpg.Polygon, asyncpg.Circle],
+            resultset=tuple[Point, Line, LineSegment, Box, Path, Polygon, Circle],
         )
 
         async with get_connection() as conn:
             await create_sql.execute(conn)
             record = (
-                asyncpg.Point(1.5, 2.5),
-                asyncpg.Line(1.5, 2.5, 3.5),
-                asyncpg.LineSegment(asyncpg.Point(1.5, 2.5), asyncpg.Point(3.5, 4.5)),
-                asyncpg.Box(asyncpg.Point(0.25, 0.75), asyncpg.Point(-0.25, -0.75)),
-                asyncpg.Path(asyncpg.Point(0, 0), asyncpg.Point(0, 1), asyncpg.Point(1, 1), asyncpg.Point(1, 0), is_closed=True),
-                asyncpg.Polygon(asyncpg.Point(0, 0), asyncpg.Point(0, 1), asyncpg.Point(1, 1), asyncpg.Point(1, 0)),
-                asyncpg.Circle(asyncpg.Point(1.5, 2.5), 3.5),
+                Point(1.5, 2.5),
+                Line(1.5, 2.5, 3.5),
+                LineSegment(Point(1.5, 2.5), Point(3.5, 4.5)),
+                Box(Point(0.25, 0.75), Point(-0.25, -0.75)),
+                Path(Point(0, 0), Point(0, 1), Point(1, 1), Point(1, 0), is_closed=True),
+                Polygon(Point(0, 0), Point(0, 1), Point(1, 1), Point(1, 0)),
+                Circle(Point(1.5, 2.5), 3.5),
             )
             await insert_sql.executemany(conn, [record])
             self.assertEqual(await select_sql.fetch(conn), [record])
@@ -592,6 +658,12 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
                 date_time_range tsrange,
                 date_time_zone_range tstzrange,
                 date_range daterange,
+                int_multi_range int4multirange,
+                big_multi_range int8multirange,
+                decimal_multi_range nummultirange,
+                date_time_multi_range tsmultirange,
+                date_time_zone_multi_range tstzmultirange,
+                date_multi_range datemultirange,
                 CONSTRAINT pk_range_types PRIMARY KEY (id)
             );
             """
@@ -600,37 +672,45 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
         insert_sql = sql(
             """
             --sql
-            INSERT INTO range_types (int_range, big_range, decimal_range, date_time_range, date_time_zone_range, date_range)
-            VALUES ($1, $2, $3, $4, $5, $6);
+            INSERT INTO range_types (
+                int_range, big_range, decimal_range, date_time_range, date_time_zone_range, date_range,
+                int_multi_range, big_multi_range, decimal_multi_range, date_time_multi_range, date_time_zone_multi_range, date_multi_range
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
             """,
-            args=tuple[asyncpg.Range[int], asyncpg.Range[int], asyncpg.Range[Decimal], asyncpg.Range[datetime], asyncpg.Range[datetime], asyncpg.Range[date]],
+            args=tuple[Range[int], Range[int], Range[Decimal], Range[datetime], Range[datetime], Range[date], list[Range[int]], list[Range[int]], list[Range[Decimal]], list[Range[datetime]], list[Range[datetime]], list[Range[date]]],
         )
 
         select_sql = sql(
             """
             --sql
-            SELECT int_range, big_range, decimal_range, date_time_range, date_time_zone_range, date_range
+            SELECT
+                int_range, big_range, decimal_range, date_time_range, date_time_zone_range, date_range,
+                int_multi_range, big_multi_range, decimal_multi_range, date_time_multi_range, date_time_zone_multi_range, date_multi_range
             FROM range_types
             ORDER BY id;
             """,
-            resultset=tuple[asyncpg.Range[int], asyncpg.Range[int], asyncpg.Range[Decimal], asyncpg.Range[datetime], asyncpg.Range[datetime], asyncpg.Range[date]],
+            resultset=tuple[Range[int], Range[int], Range[Decimal], Range[datetime], Range[datetime], Range[date], list[Range[int]], list[Range[int]], list[Range[Decimal]], list[Range[datetime]], list[Range[datetime]], list[Range[date]]],
         )
 
-        cet = timezone(timedelta(hours=1), "Europe/Budapest")
         async with get_connection() as conn:
             await create_sql.execute(conn)
             record = (
-                asyncpg.Range[int](-2_147_483_648, 2_147_483_647),
-                asyncpg.Range[int](-9_223_372_036_854_775_808, 9_223_372_036_854_775_807),
-                asyncpg.Range[Decimal](Decimal("-0.99"), Decimal("1.00")),
-                asyncpg.Range[datetime](datetime(1984, 1, 1, 0, 0, 0), datetime(1990, 10, 23, 23, 59, 59)),
-                asyncpg.Range[datetime](datetime(1984, 1, 1, 0, 0, 0, tzinfo=cet), datetime(1990, 10, 23, 23, 59, 59, tzinfo=cet)),
-                asyncpg.Range[date](date(1984, 1, 1), date(1990, 10, 23)),
+                Range(-2_147_483_648, 2_147_483_647),
+                Range(-9_223_372_036_854_775_808, 9_223_372_036_854_775_807),
+                Range(Decimal("-0.99"), Decimal("0.99")),
+                Range(datetime(1984, 1, 1, 0, 0, 0), datetime(1990, 10, 23, 23, 59, 59)),
+                Range(datetime(1984, 1, 1, 0, 0, 0, tzinfo=timezone.utc), datetime(1990, 10, 23, 23, 59, 59, tzinfo=timezone.utc)),
+                Range(date(1984, 1, 1), date(1990, 10, 23)),
+                [Range(-2_147_483_648, -1), Range(1, 2_147_483_647)],
+                [Range(-9_223_372_036_854_775_808, -1), Range(1, 9_223_372_036_854_775_807)],
+                [Range(Decimal("0.1"), Decimal("0.2")), Range(Decimal("0.3"), Decimal("0.4")), Range(Decimal("0.5"), Decimal("0.6"))],
+                [Range(datetime(1982, 10, 23, 1, 2, 3), datetime(1982, 10, 24, 10, 20, 30)), Range(datetime(1984, 1, 1, 0, 0, 0), datetime(1990, 8, 12, 23, 59, 59))],
+                [Range(datetime(1984, 1, 1, 0, 0, 0, tzinfo=timezone.utc), datetime(1990, 10, 23, 23, 59, 59, tzinfo=timezone.utc))],
+                [Range(date(1984, 1, 1), date(1990, 10, 23)), Range(date(2000, 1, 1), date(2022, 10, 23))],
             )
             await insert_sql.executemany(conn, [record])
             self.assertEqual(await select_sql.fetch(conn), [record])
-
-            asyncpg.Range[int]()
 
 
 if __name__ == "__main__":

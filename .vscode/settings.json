@@ -20,6 +20,7 @@
         "bpchar",
         "bytea",
         "dataclass",
+        "datemultirange",
         "daterange",
         "errorlevel",
         "executemany",
@@ -31,7 +32,9 @@
         "Levente",
         "lseg",
         "macaddr",
+        "multirange",
         "mypy",
+        "nummultirange",
         "numrange",
         "resultset",
         "setlocal",
@@ -41,7 +44,9 @@
         "timedelta",
         "timestamptz",
         "timetz",
+        "tsmultirange",
         "tsrange",
+        "tstzmultirange",
         "tstzrange",
         "varchar"
     ]

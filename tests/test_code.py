@@ -140,8 +140,8 @@ def _write_function(out: TextIO, name: str, stmt: str, p: int, r: int, s: bool) 
     :param s: Whether to use singular types.
     """
 
-    print(r"@overload", file=out)
-    print(f"def {name}(stmt: {stmt}{_arg_list(p, r, s)}) -> {_class(p, r)}{_param_list(p, r)}: ...", file=out)
+    print(r"    @overload", file=out)
+    print(f"    def {name}(self, stmt: {stmt}{_arg_list(p, r, s)}) -> {_class(p, r)}{_param_list(p, r)}: ...", file=out)
 
 
 def _write_sql(out: TextIO) -> None:
@@ -180,18 +180,20 @@ def _random_type() -> type[Any]:
 
 
 def _update_code(source_code: str, block_name: str, writer: Callable[[TextIO], None]) -> str:
-    prolog = f"### START OF AUTO-GENERATED BLOCK FOR {block_name} ###\n"
-    epilog = f"### END OF AUTO-GENERATED BLOCK FOR {block_name} ###\n"
+    prolog = f"### START OF AUTO-GENERATED BLOCK FOR {block_name} ###"
+    epilog = f"### END OF AUTO-GENERATED BLOCK FOR {block_name} ###"
 
     stream = StringIO()
     writer(stream)
     code = stream.getvalue()
 
-    search = "\n".join([prolog, r".*?", epilog])
-    repl = "\n".join([prolog, code, epilog])
-    source_code, count = re.subn(search, repl, source_code, count=1, flags=re.DOTALL)
+    def _repl(mo: re.Match[str]) -> str:
+        return f"{mo.group(1)}{prolog}\n{code}\n{mo.group(2)}{epilog}"
+
+    search = re.compile(f"^(\\s*){re.escape(prolog)}$.*?^(\\s*){re.escape(epilog)}$", flags=re.DOTALL | re.MULTILINE)
+    source_code, count = search.subn(_repl, source_code, count=1)
     if count != 1:
-        raise ValueError(f"expected: a single match; got: {count}")
+        raise ValueError(f"expected: a single match for block `{block_name}`; got: {count}")
     return source_code
 
 

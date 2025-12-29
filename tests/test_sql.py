@@ -165,6 +165,65 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
                 resultset[index] = None
                 self.assertEqual(rows, [tuple(resultset)])
 
+    async def test_set_type_codec(self) -> None:
+        create_sql = sql(
+            """
+            --sql
+            DO $$ BEGIN
+                CREATE TYPE complex AS (
+                    r double precision,
+                    i double precision
+                );
+            EXCEPTION
+                WHEN duplicate_object THEN null;
+            END $$;
+
+            --sql
+            CREATE TEMPORARY TABLE complex_type(
+                id bigint GENERATED ALWAYS AS IDENTITY,
+                complex_value complex,
+                CONSTRAINT pk_complex_type PRIMARY KEY (id)
+            );
+            """
+        )
+
+        insert_sql = sql(
+            """
+            --sql
+            INSERT INTO complex_type (complex_value)
+            VALUES ($1);
+            """,
+            arg=complex,
+        )
+
+        select_sql = sql(
+            """
+            --sql
+            SELECT complex_value
+            FROM complex_type
+            ORDER BY id;
+            """,
+            result=complex,
+        )
+
+        def _complex_encoder(c: complex) -> tuple[float, float]:
+            return c.real, c.imag
+
+        def _complex_decoder(t: tuple[float, float]) -> complex:
+            return complex(t[0], t[1])
+
+        async with get_connection() as conn:
+            await conn.set_type_codec(
+                "complex",
+                encoder=_complex_encoder,
+                decoder=_complex_decoder,
+                format="tuple",
+            )
+            await create_sql.execute(conn)
+            records = [(1 + 2j,), (3 + 4j,), (5 + 6j,)]
+            await insert_sql.executemany(conn, records)
+            self.assertEqual(await select_sql.fetch(conn), records)
+
 
 if __name__ == "__main__":
     unittest.main()

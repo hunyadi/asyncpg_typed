@@ -108,23 +108,41 @@ When passing Python types via the parameters `args` and `resultset`, each type m
 Simple types include:
 
 * `bool`
-* `int`
-* `float`
-* `decimal.Decimal`
-* `datetime.date`
-* `datetime.time`
-* `datetime.datetime`
-* `datetime.timedelta`
+* numeric types:
+    * `int`
+    * `float`
+    * `decimal.Decimal`
+* date and time types:
+    * `datetime.date`
+    * `datetime.time`
+    * `datetime.datetime`
+    * `datetime.timedelta`
 * `str`
 * `bytes`
 * `uuid.UUID`
-* `IPv4Address`
-* `IPv6Address`
-* `IPv4Network`
-* `IPv6Network`
-* a user-defined class that derives from `StrEnum`
+* types defined in the module [ipaddress](https://docs.python.org/3/library/ipaddress.html):
+    * `ipaddress.IPv4Address`
+    * `ipaddress.IPv6Address`
+    * `ipaddress.IPv4Network`
+    * `ipaddress.IPv6Network`
+* [asyncpg representations](https://magicstack.github.io/asyncpg/current/api/index.html#module-asyncpg.types) of PostgreSQL geometric types:
+    * `asyncpg.Point`
+    * `asyncpg.Line`
+    * `asyncpg.LineSegment`
+    * `asyncpg.Box`
+    * `asyncpg.Path`
+    * `asyncpg.Polygon`
+    * `asyncpg.Circle`
+* concrete types of [asyncpg.Range](https://magicstack.github.io/asyncpg/current/api/index.html#asyncpg.types.Range):
+    * `asyncpg.Range[int]`
+    * `asyncpg.Range[Decimal]`
+    * `asyncpg.Range[date]`
+    * `asyncpg.Range[datetime]`
+* a user-defined enumeration class that derives from `StrEnum`
 
-Special union types are as follows:
+Custom Python types corresponding to PostgreSQL scalar or [composite types](https://www.postgresql.org/docs/current/rowtypes.html) are permitted. These types need to be pre-registered with [set_type_codec](https://magicstack.github.io/asyncpg/current/api/index.html#asyncpg.connection.Connection.set_type_codec) passing an encoder, a decoder and typically `format="tuple"`.
+
+In general, union types are not allowed. However, there are notable exceptions. Special union types are as follows:
 
 * `JsonType` to represent an object reconstructed from a JSON string
 * `IPv4Address | IPv6Address` to denote either an IPv4 or IPv6 address
@@ -226,13 +244,12 @@ async def fetchval(self, connection: Connection, *args: *P) -> R1: ...
 
 Only those functions are prompted on code completion that make sense in the context of the given number of input and output arguments. Specifically, `fetchval` is available only for a single type passed to `resultset`, and `executemany` and `fetchmany` are available only if the query takes (one or more) parameters.
 
-
-## Run-time behavior
+#### Run-time behavior
 
 When a call such as `sql.executemany(conn, records)` or `sql.fetch(conn, param1, param2)` is made on a `SQL` object at run time, the library invokes `connection.prepare(sql)` to create a `PreparedStatement` and compares the actual statement signature against the expected Python types. If the expected and actual signatures don't match, an exception `TypeMismatchError` (subclass of `TypeError`) is raised.
 
-Unfortunately, PostgreSQL doesn't propagate nullability via prepared statements: resultset types that are declared as required (e.g. `T` as opposed to `T | None`) are validated at run time. When a `None` value is encountered for a required type, an exception `NoneTypeError` (subclass of `TypeError`) is raised.
+The set of values for an enumeration type is validated when a prepared statement is created. The string values declared in a Python `StrEnum` are compared against the values listed in PostgreSQL `CREATE TYPE ... AS ENUM` by querying the system table `pg_enum`. If there are missing or extra values on either side, an exception `EnumMismatchError` (subclass of `TypeError`) is raised.
 
-The set of values for an enumeration type is validated when a prepared statement is created. The string values declared in a Python `StrEnum` are compared against the values listed in PostgreSQL `CREATE TYPE ... AS ENUM` by querying the system table `pg_enum`.
+Unfortunately, PostgreSQL doesn't propagate nullability via prepared statements: resultset types that are declared as required (e.g. `T` as opposed to `T | None`) are validated at run time. When a `None` value is encountered for a required type, an exception `NoneTypeError` (subclass of `TypeError`) is raised.
 
 PostgreSQL doesn't differentiate between IPv4 and IPv6 network definitions, or IPv4 and IPv6 addresses in the types `cidr` and `inet`. This means that semantically a union type is returned. If you specify a more restrictive type, the resultset data is validated dynamically at run time.
