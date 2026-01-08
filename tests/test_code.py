@@ -38,7 +38,7 @@ def _class(p: int, r: int) -> str:
         return f"SQL_P{pm[p]}"
 
 
-def _arg_list(p: int, r: int, s: bool) -> str:
+def _arg_list(p: int, r: int) -> str:
     args: list[str] = []
 
     if p == 1:
@@ -47,12 +47,9 @@ def _arg_list(p: int, r: int, s: bool) -> str:
         args.append("args: type[tuple[P1, Unpack[PX]]]")
 
     if r == 1:
-        if s:
-            args.append("result: type[R1]")
-        else:
-            args.append("resultset: type[tuple[R1]]")
+        args.append("result: type[R1]")
     elif r > 1:
-        args.append("resultset: type[tuple[R1, R2, Unpack[RX]]]")
+        args.append("resultset: type[RS]")
 
     if args:
         return f", *, {', '.join(args)}"
@@ -65,7 +62,7 @@ def _param_list(p: int, r: int) -> str:
     if r == 1:
         params.append("R1")
     elif r > 1:
-        params.append("tuple[R1, R2, Unpack[RX]]")
+        params.append("RS")
 
     if p == 1:
         params.append("P1")
@@ -129,7 +126,7 @@ def _write_classes(out: TextIO) -> None:
                 print(f"    async def fetchval(self, connection: Connection{pos_args}) -> R1: ...", file=out)
 
 
-def _write_function(out: TextIO, name: str, stmt: str, p: int, r: int, s: bool) -> None:
+def _write_function(out: TextIO, name: str, stmt: str, p: int, r: int) -> None:
     """
     Writes an overload function for creating a typed SQL query.
 
@@ -137,11 +134,10 @@ def _write_function(out: TextIO, name: str, stmt: str, p: int, r: int, s: bool) 
     :param stmt: SQL statement type.
     :param p: Number of inbound parameters.
     :param r: Number of outbound parameters.
-    :param s: Whether to use singular types.
     """
 
     print(r"    @overload", file=out)
-    print(f"    def {name}(self, stmt: {stmt}{_arg_list(p, r, s)}) -> {_class(p, r)}{_param_list(p, r)}: ...", file=out)
+    print(f"    def {name}(self, stmt: {stmt}{_arg_list(p, r)}) -> {_class(p, r)}{_param_list(p, r)}: ...", file=out)
 
 
 def _write_sql(out: TextIO) -> None:
@@ -149,9 +145,7 @@ def _write_sql(out: TextIO) -> None:
 
     for p in range(3):
         for r in range(3):
-            if r == 1:
-                _write_function(out, "sql", "SQLExpression", p, r, True)
-            _write_function(out, "sql", "SQLExpression", p, r, False)
+            _write_function(out, "sql", "SQLExpression", p, r)
 
 
 def _write_unsafe_sql(out: TextIO) -> None:
@@ -159,9 +153,7 @@ def _write_unsafe_sql(out: TextIO) -> None:
 
     for p in range(3):
         for r in range(3):
-            if r == 1:
-                _write_function(out, "unsafe_sql", "str", p, r, True)
-            _write_function(out, "unsafe_sql", "str", p, r, False)
+            _write_function(out, "unsafe_sql", "str", p, r)
 
 
 def _instantiate(tp: type[Any]) -> str:

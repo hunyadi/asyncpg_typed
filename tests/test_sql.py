@@ -7,7 +7,7 @@ Type-safe queries for asyncpg.
 import unittest
 from random import randint, sample
 from types import UnionType
-from typing import Any
+from typing import Any, NamedTuple
 
 from asyncpg_typed import sql
 from tests.connection import get_connection
@@ -17,7 +17,63 @@ class RollbackException(RuntimeError):
     pass
 
 
+class BoolIntStringTuple(NamedTuple):
+    boolean_value: bool
+    integer_value: int
+    string_value: str | None
+
+
 class TestSQL(unittest.IsolatedAsyncioTestCase):
+    async def test_namedtuple(self) -> None:
+        create_sql = sql(
+            """
+            --sql
+            CREATE TEMPORARY TABLE sample_data(
+                id bigint GENERATED ALWAYS AS IDENTITY,
+                boolean_value bool NOT NULL,
+                integer_value int NOT NULL,
+                string_value varchar(63),
+                CONSTRAINT pk_sample_data PRIMARY KEY (id)
+            );
+            """
+        )
+
+        insert_sql = sql(
+            """
+            --sql
+            INSERT INTO sample_data (boolean_value, integer_value, string_value)
+            VALUES ($1, $2, $3);
+            """,
+            args=BoolIntStringTuple,
+        )
+
+        select_sql = sql(
+            """
+            --sql
+            SELECT boolean_value, integer_value, string_value
+            FROM sample_data
+            WHERE integer_value < 100
+            ORDER BY integer_value;
+            """,
+            resultset=BoolIntStringTuple,
+        )
+
+        async with get_connection() as conn:
+            await create_sql.execute(conn)
+            await insert_sql.executemany(conn, [(False, 1, "one"), (True, 2, "two"), (False, 3, "three"), (False, 23, "twenty-three"), (True, 64, None)])
+
+            rows = await select_sql.fetch(conn)
+            for r in rows:
+                self.assertIsInstance(r, BoolIntStringTuple)
+            self.assertEqual(rows, [(False, 1, "one"), (True, 2, "two"), (False, 3, "three"), (False, 23, "twenty-three"), (True, 64, None)])
+
+            row = await select_sql.fetchrow(conn)
+            self.assertIsInstance(row, BoolIntStringTuple)
+            if isinstance(row, BoolIntStringTuple):
+                self.assertEqual(row.boolean_value, False)
+                self.assertEqual(row.integer_value, 1)
+                self.assertEqual(row.string_value, "one")
+
     async def test_sql(self) -> None:
         create_sql = sql(
             """

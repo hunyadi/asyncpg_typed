@@ -7,6 +7,8 @@ This Python library provides "compile-time" validation for SQL queries that lint
 
 ## Motivating example
 
+### Using a plain tuple
+
 ```python
 # create a typed object, setting expected and returned types
 select_where_sql = sql(
@@ -28,7 +30,7 @@ try:
     # ✅ Type of "rows" is "list[tuple[bool, int, str | None]]"
     reveal_type(rows)
 
-    # ⚠️ Argument missing for parameter "arg2"
+    # ⚠️ Expected 1 more positional argument
     rows = await select_where_sql.fetch(conn, False)
 
     # ⚠️ Argument of type "float" cannot be assigned to parameter "arg2" of type "int" in function "fetch"; "float" is not assignable to "int"
@@ -36,27 +38,52 @@ try:
 
 finally:
     await conn.close()
+```
 
-# create a list of data-class instances from a list of typed tuples
-@dataclass
-class DataObject:
+### Using a named tuple
+
+```python
+# capture resultset column names and data types as fields of a named tuple
+class Resultset(NamedTuple):
     boolean_value: bool
     integer_value: int
     string_value: str | None
 
-# ✅ Valid initializer call
-items = [DataObject(*row) for row in rows]
 
-@dataclass
-class MismatchedObject:
-    boolean_value: bool
-    integer_value: int
-    string_value: str
+# create a typed object, declaring return types with the named tuple
+select_sql = sql(
+    """--sql
+    SELECT boolean_value, integer_value, string_value
+    FROM sample_data
+    ORDER BY integer_value;
+    """,
+    resultset=Resultset,
+)
 
-# ⚠️ Argument of type "int | None" cannot be assigned to parameter "integer_value" of type "int" in function "__init__"; "None" is not assignable to "int"
-items = [MismatchedObject(*row) for row in rows]
+conn = await asyncpg.connect(host="localhost", port=5432, user="postgres", password="postgres")
+try:
+    rows = await select_sql.fetch(conn)
+
+    # ✅ Type of "rows" is "list[Resultset]"
+    reveal_type(rows)
+
+    for row in rows:
+        # use dot notation to access properties
+        if row.string_value is not None:
+            print(f"#{row.integer_value}: {row.string_value}")
+
+        # ✅ Type of "row.boolean_value" is "bool"
+        reveal_type(row.boolean_value)
+
+        # unpack named tuple
+        b, i, s = row
+
+        # ✅ Type of "s" is "str | None"
+        reveal_type(s)
+
+finally:
+    await conn.close()
 ```
-
 
 ## Syntax
 
@@ -246,10 +273,12 @@ Only those functions are prompted on code completion that make sense in the cont
 
 #### Run-time behavior
 
-When a call such as `sql.executemany(conn, records)` or `sql.fetch(conn, param1, param2)` is made on a `SQL` object at run time, the library invokes `connection.prepare(sql)` to create a `PreparedStatement` and compares the actual statement signature against the expected Python types. If the expected and actual signatures don't match, an exception `TypeMismatchError` (subclass of `TypeError`) is raised.
+When a call such as `sql.executemany(conn, records)` or `sql.fetch(conn, param1, param2)` is made on a `SQL` object at run time, the library invokes `connection.prepare(sql)` to create a `PreparedStatement` and compares the actual statement signature against the expected Python types. If the expected and actual signatures don't match, a `TypeMismatchError` exception is raised.
 
-The set of values for an enumeration type is validated when a prepared statement is created. The string values declared in a Python `StrEnum` are compared against the values listed in PostgreSQL `CREATE TYPE ... AS ENUM` by querying the system table `pg_enum`. If there are missing or extra values on either side, an exception `EnumMismatchError` (subclass of `TypeError`) is raised.
+If the resultset type has been declared with a subclass of `NamedTuple`, the field names of the tuple are compared against the column names of the PostgreSQL resultset. Should there be a mismatch, a `NameMismatchError` is raised. Field and column order is relevant.
 
-Unfortunately, PostgreSQL doesn't propagate nullability via prepared statements: resultset types that are declared as required (e.g. `T` as opposed to `T | None`) are validated at run time. When a `None` value is encountered for a required type, an exception `NoneTypeError` (subclass of `TypeError`) is raised.
+The set of values for an enumeration type is validated when a prepared statement is created. The string values declared in a Python `StrEnum` are compared against the values listed in PostgreSQL `CREATE TYPE ... AS ENUM` by querying the system table `pg_enum`. If there are missing or extra values on either side, an `EnumMismatchError` exception is raised.
+
+Unfortunately, PostgreSQL doesn't propagate nullability via prepared statements: resultset types that are declared as required (e.g. `T` as opposed to `T | None`) have to be validated at run time. When a `None` value is encountered for a required type, a `NoneTypeError` exception is raised.
 
 PostgreSQL doesn't differentiate between IPv4 and IPv6 network definitions, or IPv4 and IPv6 addresses in the types `cidr` and `inet`. This means that semantically a union type is returned. If you specify a more restrictive type, the resultset data is validated dynamically at run time.
