@@ -9,7 +9,7 @@ from random import randint, sample
 from types import UnionType
 from typing import Any, NamedTuple
 
-from asyncpg_typed import sql
+from asyncpg_typed import NameMismatchError, NoneTypeError, TypeMismatchError, sql
 from tests.connection import get_connection
 
 
@@ -21,6 +21,10 @@ class BoolIntStringTuple(NamedTuple):
     boolean_value: bool
     integer_value: int
     string_value: str | None
+
+
+class MismatchedTuple(NamedTuple):
+    value: str | None
 
 
 class TestSQL(unittest.IsolatedAsyncioTestCase):
@@ -74,6 +78,19 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(row.integer_value, 1)
                 self.assertEqual(row.string_value, "one")
 
+    async def test_mismatch(self) -> None:
+        select_sql = sql(
+            """
+            --sql
+            SELECT NULL AS val;
+            """,
+            resultset=MismatchedTuple,
+        )
+
+        async with get_connection() as conn:
+            with self.assertRaises(NameMismatchError):
+                await select_sql.fetch(conn)
+
     async def test_sql(self) -> None:
         create_sql = sql(
             """
@@ -120,6 +137,16 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             resultset=tuple[bool, int, str | None],
         )
 
+        select_column_sql = sql(
+            """
+            --sql
+            SELECT integer_value
+            FROM sample_data
+            ORDER BY integer_value;
+            """,
+            result=int,
+        )
+
         insert_returning_sql = sql(
             """
             --sql
@@ -164,6 +191,7 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await select_sql.fetch(conn), [(False, 1, "one"), (True, 2, "two"), (False, 3, "three"), (False, 23, "twenty-three"), (True, 64, None)])
             self.assertEqual(await select_where_sql.fetch(conn, False, 2), [(False, 3, "three"), (False, 23, "twenty-three")])
             self.assertEqual(await select_where_sql.fetchrow(conn, True, 32), (True, 64, None))
+            self.assertEqual(await select_column_sql.fetchcol(conn), [1, 2, 3, 23, 64])
             rows = await insert_returning_sql.fetchmany(conn, [(True, 4, "four"), (False, 5, "five"), (True, 6, "six")])
             self.assertEqual(len(rows), 3)
             for row in rows:
@@ -176,6 +204,32 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             count_where = await count_where_sql.fetchval(conn, 1)
             self.assertIsInstance(count_where, int)
             self.assertEqual(count_where, 7)
+
+    async def test_type(self) -> None:
+        select_sql = sql(
+            """
+            --sql
+            SELECT 'string';
+            """,
+            result=int,
+        )
+
+        async with get_connection() as conn:
+            with self.assertRaises(TypeMismatchError):
+                await select_sql.fetch(conn)
+
+    async def test_none(self) -> None:
+        select_sql = sql(
+            """
+            --sql
+            SELECT NULL::bigint;
+            """,
+            result=int,
+        )
+
+        async with get_connection() as conn:
+            with self.assertRaises(NoneTypeError):
+                await select_sql.fetch(conn)
 
     async def test_multiple(self) -> None:
         passthrough_sql = sql(

@@ -123,6 +123,8 @@ def _write_classes(out: TextIO) -> None:
 
             if r == 1:
                 print(r"    @abstractmethod", file=out)
+                print(f"    async def fetchcol(self, connection: Connection{pos_args}) -> list[R1]: ...", file=out)
+                print(r"    @abstractmethod", file=out)
                 print(f"    async def fetchval(self, connection: Connection{pos_args}) -> R1: ...", file=out)
 
 
@@ -262,6 +264,7 @@ class TestCode(unittest.TestCase):
                         print(f"        assert_type(await {var}.fetchrow(conn{args}), tuple[{output_types}] | None)", file=f)
 
                         if len(output_type_list) == 1:
+                            print(f"        assert_type(await {var}.fetchcol(conn{args}), list[{output_type_list[0].__name__}])", file=f)
                             print(f"        assert_type(await {var}.fetchval(conn{args}), {output_type_list[0].__name__})", file=f)
 
                     print(file=f)

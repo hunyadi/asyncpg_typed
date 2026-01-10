@@ -551,6 +551,16 @@ class _SQLObject:
             case _:
                 self._raise_required_is_none(row)
 
+    def check_column(self, column: list[Any]) -> None:
+        """
+        Verifies if the declared type matches the actual value type of a single-column resultset.
+        """
+
+        if self._required:
+            for i, value in enumerate(column):
+                if value is None:
+                    raise NoneTypeError(f"expected: {self._resultset_data_types[0]} in row #{i}; got: NULL")
+
     def check_value(self, value: Any) -> None:
         """
         Verifies if the declared type matches the actual value type.
@@ -614,6 +624,21 @@ class _SQLObject:
             return wrapper((converters[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(len(row)))
         else:
             return wrapper(value for value in row)
+
+    def convert_column(self, rows: list[asyncpg.Record]) -> list[Any]:
+        """
+        Converts a single column in the PostgreSQL result-set to its corresponding Python target type.
+
+        :param rows: List of rows returned by PostgreSQL.
+        :returns: List of values having the configured Python target type.
+        """
+
+        cast = self._resultset_cast
+        if cast:
+            converter = self._resultset_converters[0]
+            return [(converter(value) if (value := row[0]) is not None else value) for row in rows]
+        else:
+            return [row[0] for row in rows]
 
     def convert_value(self, value: Any) -> Any:
         """
@@ -788,6 +813,13 @@ class _SQLImpl(_SQL):
         self._sql.check_row(resultset)
         return resultset
 
+    async def fetchcol(self, connection: asyncpg.Connection, *args: Any) -> list[Any]:
+        stmt = await self._prepare(connection)
+        rows = await stmt.fetch(*self._sql.convert_arg_list(args))
+        column = self._sql.convert_column(rows)
+        self._sql.check_column(column)
+        return column
+
     async def fetchval(self, connection: asyncpg.Connection, *args: Any) -> Any:
         stmt = await self._prepare(connection)
         value = await stmt.fetchval(*self._sql.convert_arg_list(args))
@@ -817,6 +849,8 @@ class SQL_R1_P0(SQL_P0, Protocol[R1]):
     @abstractmethod
     async def fetchrow(self, connection: Connection) -> tuple[R1] | None: ...
     @abstractmethod
+    async def fetchcol(self, connection: Connection) -> list[R1]: ...
+    @abstractmethod
     async def fetchval(self, connection: Connection) -> R1: ...
 
 
@@ -841,6 +875,8 @@ class SQL_R1_PX(SQL_PX[Unpack[PX]], Protocol[R1, Unpack[PX]]):
     async def fetchmany(self, connection: Connection, args: Iterable[tuple[Unpack[PX]]]) -> list[tuple[R1]]: ...
     @abstractmethod
     async def fetchrow(self, connection: Connection, *args: Unpack[PX]) -> tuple[R1] | None: ...
+    @abstractmethod
+    async def fetchcol(self, connection: Connection, *args: Unpack[PX]) -> list[R1]: ...
     @abstractmethod
     async def fetchval(self, connection: Connection, *args: Unpack[PX]) -> R1: ...
 

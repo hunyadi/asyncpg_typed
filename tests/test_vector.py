@@ -17,7 +17,7 @@ class RollbackException(RuntimeError):
     pass
 
 
-class TestConnection(unittest.IsolatedAsyncioTestCase):
+class TestVector(unittest.IsolatedAsyncioTestCase):
     async def test_vector_type(self) -> None:
         create_sql = sql(
             """
@@ -29,7 +29,7 @@ class TestConnection(unittest.IsolatedAsyncioTestCase):
                 id bigint GENERATED ALWAYS AS IDENTITY,
                 embedding vector(1536),
                 half_embedding halfvec(1536) NOT NULL,
-                CONSTRAINT pk_composite_types PRIMARY KEY (id)
+                CONSTRAINT pk_vector_types PRIMARY KEY (id)
             );
             """
         )
