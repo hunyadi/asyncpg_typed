@@ -40,9 +40,11 @@ RequiredJsonType = bool | int | float | str | dict[str, "JsonType"] | list["Json
 
 TargetType: TypeAlias = type[Any] | UnionType
 
-TargetWrapper: TypeAlias = Callable[[Iterable[Any]], tuple[Any, ...]]
-
 Connection: TypeAlias = asyncpg.Connection | asyncpg.pool.PoolConnectionProxy
+
+
+class CountMismatchError(TypeError):
+    "Raised when a prepared statement takes or returns a different number of parameters or columns than declared in Python."
 
 
 class TypeMismatchError(TypeError):
@@ -362,7 +364,7 @@ class _TypeVerifier:
 
 
 @dataclass(frozen=True)
-class _SQLPlaceholder:
+class _Placeholder:
     ordinal: int
     data_type: TargetType
 
@@ -370,15 +372,33 @@ class _SQLPlaceholder:
         return f"{self.__class__.__name__}({self.ordinal}, {self.data_type!r})"
 
 
+class _ResultsetWrapper:
+    "Wraps result-set rows into a tuple or named tuple."
+
+    init: Callable[..., tuple[Any, ...]] | None
+    iterable: Callable[[Iterable[Any]], tuple[Any, ...]]
+
+    def __init__(self, init: Callable[..., tuple[Any, ...]] | None, iterable: Callable[[Iterable[Any]], tuple[Any, ...]]) -> None:
+        """
+        Initializes a result-set wrapper.
+
+        :param init: Initializer function that takes as many arguments as columns in the result-set.
+        :param iterable: Initializer function that takes an iterable over columns of a result-set row.
+        """
+
+        self.init = init
+        self.iterable = iterable
+
+
 class _SQLObject:
     """
     Associates input and output type information with a SQL statement.
     """
 
-    _parameter_data_types: tuple[_SQLPlaceholder, ...]
+    _parameter_data_types: tuple[_Placeholder, ...]
     _resultset_data_types: tuple[TargetType, ...]
     _resultset_column_names: tuple[str, ...] | None
-    _resultset_wrapper: TargetWrapper
+    _resultset_wrapper: _ResultsetWrapper
     _parameter_cast: int
     _parameter_converters: tuple[Callable[[Any], Any], ...]
     _required: int
@@ -386,7 +406,7 @@ class _SQLObject:
     _resultset_converters: tuple[Callable[[Any], Any], ...]
 
     @property
-    def parameter_data_types(self) -> tuple[_SQLPlaceholder, ...]:
+    def parameter_data_types(self) -> tuple[_Placeholder, ...]:
         "Expected inbound parameter data types."
 
         return self._parameter_data_types
@@ -409,9 +429,9 @@ class _SQLObject:
         args: tuple[TargetType, ...],
         resultset: tuple[TargetType, ...],
         names: tuple[str, ...] | None,
-        wrapper: TargetWrapper,
+        wrapper: _ResultsetWrapper,
     ) -> None:
-        self._parameter_data_types = tuple(_SQLPlaceholder(ordinal, get_required_type(arg)) for ordinal, arg in enumerate(args, start=1))
+        self._parameter_data_types = tuple(_Placeholder(ordinal, get_required_type(arg)) for ordinal, arg in enumerate(args, start=1))
         self._resultset_data_types = tuple(get_required_type(data_type) for data_type in resultset)
         self._resultset_column_names = names
         self._resultset_wrapper = wrapper
@@ -601,13 +621,95 @@ class _SQLObject:
         :returns: List of tuples with each tuple element having the configured Python target type.
         """
 
-        wrapper = self._resultset_wrapper
+        if not rows:
+            return []
+
+        init_wrapper = self._resultset_wrapper.init
+        iterable_wrapper = self._resultset_wrapper.iterable
         cast = self._resultset_cast
-        if cast:
-            converters = self._resultset_converters
-            return [wrapper((converters[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(len(row))) for row in rows]
-        else:
-            return [wrapper(value for value in row) for row in rows]
+        if not cast:
+            return [iterable_wrapper(row.values()) for row in rows]
+
+        columns = len(rows[0])
+        match columns:
+            case 1:
+                converter = self._resultset_converters[0]
+                if init_wrapper is not None:
+                    return [init_wrapper(converter(value) if (value := row[0]) is not None else value) for row in rows]
+                else:
+                    return [(converter(value) if (value := row[0]) is not None else value,) for row in rows]
+            case 2:
+                conv_a, conv_b = self._resultset_converters
+                cast_a = cast >> 0 & 1
+                cast_b = cast >> 1 & 1
+                if init_wrapper is not None:
+                    return [
+                        init_wrapper(
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                        )
+                        for row in rows
+                    ]
+                else:
+                    return [
+                        (
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                        )
+                        for row in rows
+                    ]
+            case 3:
+                conv_a, conv_b, conv_c = self._resultset_converters
+                cast_a = cast >> 0 & 1
+                cast_b = cast >> 1 & 1
+                cast_c = cast >> 2 & 1
+                if init_wrapper is not None:
+                    return [
+                        init_wrapper(
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                            conv_c(value) if (value := row[2]) is not None and cast_c else value,
+                        )
+                        for row in rows
+                    ]
+                else:
+                    return [
+                        (
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                            conv_c(value) if (value := row[2]) is not None and cast_c else value,
+                        )
+                        for row in rows
+                    ]
+            case 4:
+                conv_a, conv_b, conv_c, conv_d = self._resultset_converters
+                cast_a = cast >> 0 & 1
+                cast_b = cast >> 1 & 1
+                cast_c = cast >> 2 & 1
+                cast_d = cast >> 3 & 1
+                if init_wrapper is not None:
+                    return [
+                        init_wrapper(
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                            conv_c(value) if (value := row[2]) is not None and cast_c else value,
+                            conv_d(value) if (value := row[3]) is not None and cast_d else value,
+                        )
+                        for row in rows
+                    ]
+                else:
+                    return [
+                        (
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                            conv_c(value) if (value := row[2]) is not None and cast_c else value,
+                            conv_d(value) if (value := row[3]) is not None and cast_d else value,
+                        )
+                        for row in rows
+                    ]
+            case _:
+                converters = self._resultset_converters
+                return [iterable_wrapper((converters[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(columns)) for row in rows]
 
     def convert_row(self, row: asyncpg.Record) -> tuple[Any, ...]:
         """
@@ -617,13 +719,14 @@ class _SQLObject:
         :returns: A tuple with each tuple element having the configured Python target type.
         """
 
-        wrapper = self._resultset_wrapper
+        wrapper = self._resultset_wrapper.iterable
         cast = self._resultset_cast
         if cast:
             converters = self._resultset_converters
-            return wrapper((converters[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(len(row)))
+            columns = len(row)
+            return wrapper((converters[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(columns))
         else:
-            return wrapper(value for value in row)
+            return wrapper(row.values())
 
     def convert_column(self, rows: list[asyncpg.Record]) -> list[Any]:
         """
@@ -675,7 +778,7 @@ if sys.version_info >= (3, 14):
         """
 
         _strings: tuple[str, ...]
-        _placeholders: tuple[_SQLPlaceholder, ...]
+        _placeholders: tuple[_Placeholder, ...]
 
         def __init__(
             self,
@@ -684,7 +787,7 @@ if sys.version_info >= (3, 14):
             args: tuple[TargetType, ...],
             resultset: tuple[TargetType, ...],
             names: tuple[str, ...] | None,
-            wrapper: TargetWrapper,
+            wrapper: _ResultsetWrapper,
         ) -> None:
             super().__init__(args=args, resultset=resultset, names=names, wrapper=wrapper)
 
@@ -700,7 +803,7 @@ if sys.version_info >= (3, 14):
 
             if len(self.parameter_data_types) > 0:
 
-                def _to_placeholder(ip: Interpolation) -> _SQLPlaceholder:
+                def _to_placeholder(ip: Interpolation) -> _Placeholder:
                     ordinal = int(ip.value)
                     if not (0 < ordinal <= len(self.parameter_data_types)):
                         raise IndexError(f"interpolation `{ip.expression}` is an ordinal out of range; expected: 0 < value <= {len(self.parameter_data_types)}")
@@ -736,7 +839,7 @@ class _SQLString(_SQLObject):
         args: tuple[TargetType, ...],
         resultset: tuple[TargetType, ...],
         names: tuple[str, ...] | None,
-        wrapper: TargetWrapper,
+        wrapper: _ResultsetWrapper,
     ) -> None:
         super().__init__(args=args, resultset=resultset, names=names, wrapper=wrapper)
         self._sql = sql
@@ -771,10 +874,20 @@ class _SQLImpl(_SQL):
         stmt = await connection.prepare(self._sql.query())
 
         verifier = _TypeVerifier(connection)
+
+        input_count = len(self._sql.parameter_data_types)
+        parameter_count = len(stmt.get_parameters())
+        if parameter_count != input_count:
+            raise CountMismatchError(f"expected: PostgreSQL query to take {input_count} parameter(s); got: {parameter_count}")
         for param, placeholder in zip(stmt.get_parameters(), self._sql.parameter_data_types, strict=True):
             await verifier.check_data_type(f"parameter ${placeholder.ordinal}", param, placeholder.data_type)
+
+        output_count = len(self._sql.resultset_data_types)
+        column_count = len(stmt.get_attributes())
+        if column_count != output_count:
+            raise CountMismatchError(f"expected: PostgreSQL query to return {output_count} column(s) in result-set; got: {column_count}")
         if self._sql.resultset_column_names is not None:
-            for index, attr, name in zip(range(len(self._sql.resultset_column_names)), stmt.get_attributes(), self._sql.resultset_column_names, strict=True):
+            for index, attr, name in zip(range(output_count), stmt.get_attributes(), self._sql.resultset_column_names, strict=True):
                 if attr.name != name:
                     raise NameMismatchError(f"expected: Python field name `{name}` to match PostgreSQL result-set column name `{attr.name}` for index #{index}")
         for attr, data_type in zip(stmt.get_attributes(), self._sql.resultset_data_types, strict=True):
@@ -988,7 +1101,9 @@ class SQLFactory:
         return _SQLImpl(obj)
 
 
-def _sql_args_resultset(*, args: type[Any] | None = None, resultset: type[Any] | None = None, arg: type[Any] | None = None, result: type[Any] | None = None) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[str, ...] | None, TargetWrapper]:
+def _sql_args_resultset(
+    *, args: type[Any] | None = None, resultset: type[Any] | None = None, arg: type[Any] | None = None, result: type[Any] | None = None
+) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[str, ...] | None, _ResultsetWrapper]:
     "Parses an argument/resultset signature into input/output types."
 
     if args is not None and arg is not None:
@@ -1015,21 +1130,21 @@ def _sql_args_resultset(*, args: type[Any] | None = None, resultset: type[Any] |
             # named tuple
             output_data_types = tuple(tp for tp in resultset.__annotations__.values())
             names = tuple(f for f in resultset._fields)
-            wrapper = resultset._make
+            wrapper = _ResultsetWrapper(resultset, resultset._make)
         else:
             # regular tuple
             if get_origin(resultset) is not tuple:
                 raise TypeError(f"expected: `type[tuple[T, ...]]` for `resultset`; got: {resultset}")
             output_data_types = get_args(resultset)
             names = None
-            wrapper = tuple
+            wrapper = _ResultsetWrapper(None, tuple)
     else:
         if result is not None:
             output_data_types = (result,)
         else:
             output_data_types = ()
         names = None
-        wrapper = tuple
+        wrapper = _ResultsetWrapper(None, tuple)
 
     return input_data_types, output_data_types, names, wrapper
 

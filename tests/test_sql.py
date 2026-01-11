@@ -9,26 +9,17 @@ from random import randint, sample
 from types import UnionType
 from typing import Any, NamedTuple
 
-from asyncpg_typed import NameMismatchError, NoneTypeError, TypeMismatchError, sql
+from asyncpg_typed import CountMismatchError, JsonType, NameMismatchError, NoneTypeError, TypeMismatchError, sql, unsafe_sql
 from tests.connection import get_connection
-
-
-class RollbackException(RuntimeError):
-    pass
-
-
-class BoolIntStringTuple(NamedTuple):
-    boolean_value: bool
-    integer_value: int
-    string_value: str | None
-
-
-class MismatchedTuple(NamedTuple):
-    value: str | None
 
 
 class TestSQL(unittest.IsolatedAsyncioTestCase):
     async def test_namedtuple(self) -> None:
+        class BoolIntStringTuple(NamedTuple):
+            boolean_value: bool
+            integer_value: int
+            string_value: str | None
+
         create_sql = sql(
             """
             --sql
@@ -78,7 +69,63 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(row.integer_value, 1)
                 self.assertEqual(row.string_value, "one")
 
+    async def test_converted_namedtuple(self) -> None:
+        class BoolJsonTuple(NamedTuple):
+            boolean_value: bool
+            json_value: JsonType
+
+        create_sql = sql(
+            """
+            --sql
+            CREATE TEMPORARY TABLE sample_data(
+                id bigint GENERATED ALWAYS AS IDENTITY,
+                boolean_value bool NOT NULL,
+                json_value jsonb NOT NULL,
+                CONSTRAINT pk_sample_data PRIMARY KEY (id)
+            );
+            """
+        )
+
+        insert_sql = sql(
+            """
+            --sql
+            INSERT INTO sample_data (boolean_value, json_value)
+            VALUES ($1, $2);
+            """,
+            args=BoolJsonTuple,
+        )
+
+        select_sql = sql(
+            """
+            --sql
+            SELECT boolean_value, json_value
+            FROM sample_data
+            ORDER BY id;
+            """,
+            resultset=BoolJsonTuple,
+        )
+
+        records = [BoolJsonTuple(True, {"arg": "value"}), BoolJsonTuple(False, {}), BoolJsonTuple(True, {"datetime": "2000-10-23T23:59:59"})]
+
+        async with get_connection() as conn:
+            await create_sql.execute(conn)
+            await insert_sql.executemany(conn, records)
+
+            rows = await select_sql.fetch(conn)
+            for r in rows:
+                self.assertIsInstance(r, BoolJsonTuple)
+            self.assertEqual(rows, records)
+
+            row = await select_sql.fetchrow(conn)
+            self.assertIsInstance(row, BoolJsonTuple)
+            if isinstance(row, BoolJsonTuple):
+                self.assertEqual(row.boolean_value, True)
+                self.assertEqual(row.json_value, {"arg": "value"})
+
     async def test_mismatch(self) -> None:
+        class MismatchedTuple(NamedTuple):
+            value: str | None
+
         select_sql = sql(
             """
             --sql
@@ -92,6 +139,9 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
                 await select_sql.fetch(conn)
 
     async def test_sql(self) -> None:
+        class RollbackException(RuntimeError):
+            pass
+
         create_sql = sql(
             """
             --sql
@@ -205,6 +255,19 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(count_where, int)
             self.assertEqual(count_where, 7)
 
+    async def test_count(self) -> None:
+        select_sql = sql(
+            """
+            --sql
+            SELECT NULL::bigint;
+            """,
+            resultset=tuple[int | None, int | None],
+        )
+
+        async with get_connection() as conn:
+            with self.assertRaises(CountMismatchError):
+                await select_sql.fetch(conn)
+
     async def test_type(self) -> None:
         select_sql = sql(
             """
@@ -249,31 +312,55 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(rows, [numbers])
 
     async def test_nullable(self) -> None:
-        def nullif(a: int, b: int) -> str:
-            return f"NULLIF(${a + 1}::int, ${b + 1}::int)"
+        "Checks nullability with various combinations of column count and `NULL` value position in the result-set."
 
-        args = sample(range(-2_147_483_648, 2_147_483_647), 8)
+        max_count = 10
+        args = sample(range(-2_147_483_648, 2_147_483_647), max_count)
+        max_value = max(args)
 
         async with get_connection() as conn:
-            for index in range(8):
-                params: list[type[Any] | UnionType] = [int, int, int, int, int, int, int, int]
-                params[index] = int | None
+            for count in range(1, max_count + 1):
+                for index in range(count):
+                    params: list[type[Any] | UnionType] = [int] * count
+                    params[index] = int | None
 
-                passthrough_sql = sql(  # pyright: ignore[reportUnknownVariableType]
-                    f"""
-                    --sql
-                    SELECT
-                        {nullif(0, index)}, {nullif(1, index)}, {nullif(2, index)}, {nullif(3, index)},
-                        {nullif(4, index)}, {nullif(5, index)}, {nullif(6, index)}, {nullif(7, index)};
-                    """,  # pyright: ignore[reportArgumentType]
-                    args=tuple[int, int, int, int, int, int, int, int],
-                    resultset=tuple[tuple(params)],  # type: ignore[misc]
-                )  # type: ignore[call-overload]
+                    # `NULL` for the active slot (but consuming all input parameters), or the input number otherwise
+                    expr: list[str] = [f"${i + 1}::int" for i in range(count)]
+                    expr[index] = f"NULLIF(GREATEST({', '.join(f'${i + 1}::int' for i in range(max_count))}), {max_value})"
 
-                rows = await passthrough_sql.fetch(conn, *args)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-                resultset: list[int | None] = [i for i in args]
-                resultset[index] = None
-                self.assertEqual(rows, [tuple(resultset)])
+                    passthrough_sql = unsafe_sql(
+                        f"SELECT {', '.join(expr)};",
+                        args=tuple[int, int, int, int, int, int, int, int, int, int],
+                        resultset=tuple[tuple(params)],  # type: ignore[misc]
+                    )  # type: ignore[call-overload]
+
+                    rows = await passthrough_sql.fetch(conn, *args)
+                    resultset: list[int | None] = [args[i] for i in range(count)]
+                    resultset[index] = None
+                    self.assertEqual(rows, [tuple(resultset)])
+
+    async def test_conversion(self) -> None:
+        "Checks conversion with various combinations of column count and converted value position in the result-set."
+
+        async with get_connection() as conn:
+            max_count = 10
+            for count in range(1, max_count + 1):
+                for index in range(count):
+                    params: list[type[Any] | UnionType] = [str | None] * count
+                    params[index] = JsonType
+
+                    expr: list[str] = ["NULL"] * count
+                    expr[index] = f"jsonb_build_object('value', {index})"
+
+                    passthrough_sql = unsafe_sql(
+                        f"SELECT {', '.join(expr)};",
+                        resultset=tuple[tuple(params)],  # type: ignore[misc]
+                    )  # type: ignore[call-overload]
+
+                    rows = await passthrough_sql.fetch(conn)
+                    resultset: list[str | JsonType] = [None for _ in range(count)]
+                    resultset[index] = {"value": index}
+                    self.assertEqual(rows, [tuple(resultset)])
 
     async def test_set_type_codec(self) -> None:
         create_sql = sql(
