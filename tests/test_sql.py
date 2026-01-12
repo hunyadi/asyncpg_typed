@@ -363,9 +363,7 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(rows, [tuple(resultset)])
 
     async def test_set_type_codec(self) -> None:
-        create_sql = sql(
-            """
-            --sql
+        create_type_sql = """
             DO $$ BEGIN
                 CREATE TYPE complex AS (
                     r double precision,
@@ -374,7 +372,10 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             EXCEPTION
                 WHEN duplicate_object THEN null;
             END $$;
+        """
 
+        create_sql = sql(
+            """
             --sql
             CREATE TEMPORARY TABLE complex_type(
                 id bigint GENERATED ALWAYS AS IDENTITY,
@@ -410,6 +411,7 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             return complex(t[0], t[1])
 
         async with get_connection() as conn:
+            await conn.execute(create_type_sql)
             await conn.set_type_codec(
                 "complex",
                 encoder=_complex_encoder,

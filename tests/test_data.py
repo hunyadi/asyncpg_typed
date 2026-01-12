@@ -712,6 +712,59 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             await insert_sql.executemany(conn, [record])
             self.assertEqual(await select_sql.fetch(conn), [record])
 
+    async def test_array_types(self) -> None:
+        create_sql = sql(
+            """
+            --sql
+            CREATE TEMPORARY TABLE array_types(
+                id bigint GENERATED ALWAYS AS IDENTITY,
+                boolean_array boolean[] NOT NULL,
+                small_array smallint[] NOT NULL,
+                integer_array integer[] NOT NULL,
+                big_array bigint[] NOT NULL,
+                decimal_array decimal[] NOT NULL,
+                real_array real[] NOT NULL,
+                double_array double precision[] NOT NULL,
+                text_array text[] NOT NULL,
+                CONSTRAINT pk_array_types PRIMARY KEY (id)
+            );
+            """
+        )
+
+        insert_sql = sql(
+            """
+            --sql
+            INSERT INTO array_types (boolean_array, small_array, integer_array, big_array, decimal_array, real_array, double_array, text_array)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+            """,
+            args=tuple[list[bool], list[int], list[int], list[int], list[Decimal], list[float], list[float], list[str]],
+        )
+
+        select_sql = sql(
+            """
+            --sql
+            SELECT boolean_array, small_array, integer_array, big_array, decimal_array, real_array, double_array, text_array
+            FROM array_types
+            ORDER BY id;
+            """,
+            resultset=tuple[list[bool], list[int], list[int], list[int], list[Decimal], list[float], list[float], list[str]],
+        )
+
+        async with get_connection() as conn:
+            await create_sql.execute(conn)
+            record: tuple[list[bool], list[int], list[int], list[int], list[Decimal], list[float], list[float], list[str]] = (
+                [False, True, True],
+                [-32_768, 0, 1, 2, 3, 4, 32_767],
+                [-2_147_483_648, 0, 1, 2, 2_147_483_647],
+                [-9_223_372_036_854_775_808, 0, 9_223_372_036_854_775_807],
+                [Decimal("0.1993"), Decimal("0.1997"), Decimal("0.2026")],
+                [-float("inf"), 0.0, float("inf")],
+                [-float("inf"), -0.5, 0.0, 0.5, float("inf")],
+                ["a", "b", "c"],
+            )
+            await insert_sql.execute(conn, *record)
+            self.assertEqual(await select_sql.fetchrow(conn), record)
+
 
 if __name__ == "__main__":
     unittest.main()

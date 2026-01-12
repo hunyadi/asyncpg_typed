@@ -341,15 +341,29 @@ class _TypeVerifier:
             if is_enum_type(data_type):
                 if pg_type.name not in ["bpchar", "varchar", "text"]:
                     raise TypeMismatchError(f"expected: Python enum type `{type_to_str(data_type)}` for {pg_name}; got: PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` instead of `char`, `varchar` or `text`")
+            elif pg_type.kind == "array" and get_origin(data_type) is list:
+                if not pg_type.name.endswith("[]"):
+                    raise TypeMismatchError(f"expected: Python list type `{type_to_str(data_type)}` for {pg_name}; got: PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` instead of array")
+
+                expected_types = _NAME_TO_TYPE.get(pg_type.name[:-2])
+                if expected_types is None:
+                    raise TypeMismatchError(f"expected: Python list type `{type_to_str(data_type)}` for {pg_name}; got: unrecognized PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`")
+                elif get_args(data_type)[0] not in expected_types:
+                    if len(expected_types) == 1:
+                        target = f"the Python type `{type_to_str(expected_types[0])}`"
+                    else:
+                        target = f"one of the Python types {', '.join(f'`{type_to_str(tp)}`' for tp in expected_types)}"
+                    raise TypeMismatchError(f"expected: Python list type `{type_to_str(data_type)}` for {pg_name}; got: incompatible PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` whose elements convert to {target}")
             else:
                 expected_types = _NAME_TO_TYPE.get(pg_type.name)
                 if expected_types is None:
                     raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; got: unrecognized PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`")
                 elif data_type not in expected_types:
-                    raise TypeMismatchError(
-                        f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; "
-                        f"got: incompatible PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`, which converts to one of the Python types {', '.join(f'`{type_to_str(tp)}`' for tp in expected_types)}"
-                    )
+                    if len(expected_types) == 1:
+                        target = f"the Python type `{type_to_str(expected_types[0])}`"
+                    else:
+                        target = f"one of the Python types {', '.join(f'`{type_to_str(tp)}`' for tp in expected_types)}"
+                    raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; got: incompatible PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` which converts to {target}")
         elif pg_type.kind == "composite":  # PostgreSQL composite types
             # user-defined composite types registered with `conn.set_type_codec()` typically using `format="tuple"`
             pass
