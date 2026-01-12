@@ -4,9 +4,9 @@ Type-safe queries for asyncpg.
 :see: https://github.com/hunyadi/asyncpg_typed
 """
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __author__ = "Levente Hunyadi"
-__copyright__ = "Copyright 2025, Levente Hunyadi"
+__copyright__ = "Copyright 2025-2026, Levente Hunyadi"
 __license__ = "MIT"
 __maintainer__ = "Levente Hunyadi"
 __status__ = "Production"
