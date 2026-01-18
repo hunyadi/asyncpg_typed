@@ -16,6 +16,37 @@ from typing import Any, TextIO
 from uuid import UUID
 
 
+def _write_convert_cast(out: TextIO) -> None:
+    "Generates code for transforming a result-set with an active conversion function."
+
+    for count in range(2, 8):
+        print(f"            case {count}:", file=out)
+        converter_list = ", ".join(f"conv_{chr(ord('a') + index)}" for index in range(0, count))
+        print(f"                {converter_list} = self._resultset_converters", file=out)
+        print(r"                if init_wrapper is not None:", file=out)
+        print(r"                    return [init_wrapper(", file=out)
+        for index in range(0, count):
+            print(f"                        conv_{chr(ord('a') + index)}(value) if (value := row[{index}]) is not None and cast_{chr(ord('a') + index)} else value,", file=out)
+        print(r"                    ) for row in rows]", file=out)
+        print(r"                else:", file=out)
+        print(r"                    return [(", file=out)
+        for index in range(0, count):
+            print(f"                        conv_{chr(ord('a') + index)}(value) if (value := row[{index}]) is not None and cast_{chr(ord('a') + index)} else value,", file=out)
+        print(r"                    ) for row in rows]", file=out)
+
+
+def _write_convert_pass(out: TextIO) -> None:
+    "Generates code for transforming a result-set with no conversion function specified."
+
+    for count in range(2, 8):
+        column_list = ", ".join(f"row[{index}]" for index in range(0, count))
+        print(f"            case {count}:", file=out)
+        print(r"                if init_wrapper is not None:", file=out)
+        print(f"                    return [init_wrapper({column_list}) for row in rows]", file=out)
+        print(r"                else:", file=out)
+        print(f"                    return [({column_list}) for row in rows]", file=out)
+
+
 def _class(p: int, r: int) -> str:
     """
     Emits a class name based on argument and resultset types.
@@ -158,21 +189,6 @@ def _write_unsafe_sql(out: TextIO) -> None:
             _write_function(out, "unsafe_sql", "str", p, r)
 
 
-def _instantiate(tp: type[Any]) -> str:
-    "Writes code to instantiate an object of the given type."
-
-    if tp is datetime:
-        return "datetime.now()"
-    elif tp is date:
-        return f"date({random.randint(1900, 2100)}, {random.randint(1, 12)}, {random.randint(1, 28)})"
-    else:
-        return f"{tp.__name__}()"
-
-
-def _random_type() -> type[Any]:
-    return random.choice([bool, int, float, Decimal, date, time, datetime, timedelta, str, bytes, UUID])
-
-
 def _update_code(source_code: str, block_name: str, writer: Callable[[TextIO], None]) -> str:
     prolog = f"### START OF AUTO-GENERATED BLOCK FOR {block_name} ###"
     epilog = f"### END OF AUTO-GENERATED BLOCK FOR {block_name} ###"
@@ -191,11 +207,28 @@ def _update_code(source_code: str, block_name: str, writer: Callable[[TextIO], N
     return source_code
 
 
+def _instantiate(tp: type[Any]) -> str:
+    "Writes code to instantiate an object of the given type."
+
+    if tp is datetime:
+        return "datetime.now()"
+    elif tp is date:
+        return f"date({random.randint(1900, 2100)}, {random.randint(1, 12)}, {random.randint(1, 28)})"
+    else:
+        return f"{tp.__name__}()"
+
+
+def _random_type() -> type[Any]:
+    return random.choice([bool, int, float, Decimal, date, time, datetime, timedelta, str, bytes, UUID])
+
+
 class TestCode(unittest.TestCase):
     def test_update(self) -> None:
         source_file = Path(__file__).parent.parent / "asyncpg_typed" / "__init__.py"
         source_code = source_file.read_text(encoding="utf-8")
 
+        source_code = _update_code(source_code, "convert_cast", _write_convert_cast)
+        source_code = _update_code(source_code, "convert_pass", _write_convert_pass)
         source_code = _update_code(source_code, "Protocol", _write_classes)
         source_code = _update_code(source_code, "sql", _write_sql)
         source_code = _update_code(source_code, "unsafe_sql", _write_unsafe_sql)

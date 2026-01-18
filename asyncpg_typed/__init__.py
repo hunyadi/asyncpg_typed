@@ -546,44 +546,8 @@ class _SQLObject:
         Verifies if declared types match actual value types in a single row.
         """
 
-        required = self._required
-        if not required:
-            return
-
-        match len(row):
-            case 1:
-                if required & (row[0] is None):
-                    self._raise_required_is_none(row)
-            case 2:
-                a, b = row
-                if required & ((a is None) | (b is None) << 1):
-                    self._raise_required_is_none(row)
-            case 3:
-                a, b, c = row
-                if required & ((a is None) | (b is None) << 1 | (c is None) << 2):
-                    self._raise_required_is_none(row)
-            case 4:
-                a, b, c, d = row
-                if required & ((a is None) | (b is None) << 1 | (c is None) << 2 | (d is None) << 3):
-                    self._raise_required_is_none(row)
-            case 5:
-                a, b, c, d, e = row
-                if required & ((a is None) | (b is None) << 1 | (c is None) << 2 | (d is None) << 3 | (e is None) << 4):
-                    self._raise_required_is_none(row)
-            case 6:
-                a, b, c, d, e, f = row
-                if required & ((a is None) | (b is None) << 1 | (c is None) << 2 | (d is None) << 3 | (e is None) << 4 | (f is None) << 5):
-                    self._raise_required_is_none(row)
-            case 7:
-                a, b, c, d, e, f, g = row
-                if required & ((a is None) | (b is None) << 1 | (c is None) << 2 | (d is None) << 3 | (e is None) << 4 | (f is None) << 5 | (g is None) << 6):
-                    self._raise_required_is_none(row)
-            case 8:
-                a, b, c, d, e, f, g, h = row
-                if required & ((a is None) | (b is None) << 1 | (c is None) << 2 | (d is None) << 3 | (e is None) << 4 | (f is None) << 5 | (g is None) << 6 | (h is None) << 7):
-                    self._raise_required_is_none(row)
-            case _:
-                self._raise_required_is_none(row)
+        if self._required:
+            self._raise_required_is_none(row)
 
     def check_column(self, column: list[Any]) -> None:
         """
@@ -638,12 +602,22 @@ class _SQLObject:
         if not rows:
             return []
 
+        if self._resultset_cast:
+            return self._convert_rows_cast(rows)
+        else:
+            return self._convert_rows_pass(rows)
+
+    def _convert_rows_cast(self, rows: list[asyncpg.Record]) -> list[tuple[Any, ...]]:
         init_wrapper = self._resultset_wrapper.init
         iterable_wrapper = self._resultset_wrapper.iterable
         cast = self._resultset_cast
-        if not cast:
-            return [iterable_wrapper(row.values()) for row in rows]
-
+        cast_a = cast >> 0 & 1
+        cast_b = cast >> 1 & 1
+        cast_c = cast >> 2 & 1
+        cast_d = cast >> 3 & 1
+        cast_e = cast >> 4 & 1
+        cast_f = cast >> 5 & 1
+        cast_g = cast >> 6 & 1
         columns = len(rows[0])
         match columns:
             case 1:
@@ -652,10 +626,9 @@ class _SQLObject:
                     return [init_wrapper(converter(value) if (value := row[0]) is not None else value) for row in rows]
                 else:
                     return [(converter(value) if (value := row[0]) is not None else value,) for row in rows]
+            ### START OF AUTO-GENERATED BLOCK FOR convert_cast ###
             case 2:
                 conv_a, conv_b = self._resultset_converters
-                cast_a = cast >> 0 & 1
-                cast_b = cast >> 1 & 1
                 if init_wrapper is not None:
                     return [
                         init_wrapper(
@@ -674,9 +647,6 @@ class _SQLObject:
                     ]
             case 3:
                 conv_a, conv_b, conv_c = self._resultset_converters
-                cast_a = cast >> 0 & 1
-                cast_b = cast >> 1 & 1
-                cast_c = cast >> 2 & 1
                 if init_wrapper is not None:
                     return [
                         init_wrapper(
@@ -697,10 +667,6 @@ class _SQLObject:
                     ]
             case 4:
                 conv_a, conv_b, conv_c, conv_d = self._resultset_converters
-                cast_a = cast >> 0 & 1
-                cast_b = cast >> 1 & 1
-                cast_c = cast >> 2 & 1
-                cast_d = cast >> 3 & 1
                 if init_wrapper is not None:
                     return [
                         init_wrapper(
@@ -721,9 +687,134 @@ class _SQLObject:
                         )
                         for row in rows
                     ]
+            case 5:
+                conv_a, conv_b, conv_c, conv_d, conv_e = self._resultset_converters
+                if init_wrapper is not None:
+                    return [
+                        init_wrapper(
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                            conv_c(value) if (value := row[2]) is not None and cast_c else value,
+                            conv_d(value) if (value := row[3]) is not None and cast_d else value,
+                            conv_e(value) if (value := row[4]) is not None and cast_e else value,
+                        )
+                        for row in rows
+                    ]
+                else:
+                    return [
+                        (
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                            conv_c(value) if (value := row[2]) is not None and cast_c else value,
+                            conv_d(value) if (value := row[3]) is not None and cast_d else value,
+                            conv_e(value) if (value := row[4]) is not None and cast_e else value,
+                        )
+                        for row in rows
+                    ]
+            case 6:
+                conv_a, conv_b, conv_c, conv_d, conv_e, conv_f = self._resultset_converters
+                if init_wrapper is not None:
+                    return [
+                        init_wrapper(
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                            conv_c(value) if (value := row[2]) is not None and cast_c else value,
+                            conv_d(value) if (value := row[3]) is not None and cast_d else value,
+                            conv_e(value) if (value := row[4]) is not None and cast_e else value,
+                            conv_f(value) if (value := row[5]) is not None and cast_f else value,
+                        )
+                        for row in rows
+                    ]
+                else:
+                    return [
+                        (
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                            conv_c(value) if (value := row[2]) is not None and cast_c else value,
+                            conv_d(value) if (value := row[3]) is not None and cast_d else value,
+                            conv_e(value) if (value := row[4]) is not None and cast_e else value,
+                            conv_f(value) if (value := row[5]) is not None and cast_f else value,
+                        )
+                        for row in rows
+                    ]
+            case 7:
+                conv_a, conv_b, conv_c, conv_d, conv_e, conv_f, conv_g = self._resultset_converters
+                if init_wrapper is not None:
+                    return [
+                        init_wrapper(
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                            conv_c(value) if (value := row[2]) is not None and cast_c else value,
+                            conv_d(value) if (value := row[3]) is not None and cast_d else value,
+                            conv_e(value) if (value := row[4]) is not None and cast_e else value,
+                            conv_f(value) if (value := row[5]) is not None and cast_f else value,
+                            conv_g(value) if (value := row[6]) is not None and cast_g else value,
+                        )
+                        for row in rows
+                    ]
+                else:
+                    return [
+                        (
+                            conv_a(value) if (value := row[0]) is not None and cast_a else value,
+                            conv_b(value) if (value := row[1]) is not None and cast_b else value,
+                            conv_c(value) if (value := row[2]) is not None and cast_c else value,
+                            conv_d(value) if (value := row[3]) is not None and cast_d else value,
+                            conv_e(value) if (value := row[4]) is not None and cast_e else value,
+                            conv_f(value) if (value := row[5]) is not None and cast_f else value,
+                            conv_g(value) if (value := row[6]) is not None and cast_g else value,
+                        )
+                        for row in rows
+                    ]
+
+            ### END OF AUTO-GENERATED BLOCK FOR convert_cast ###
             case _:
                 converters = self._resultset_converters
                 return [iterable_wrapper((converters[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(columns)) for row in rows]
+
+    def _convert_rows_pass(self, rows: list[asyncpg.Record]) -> list[tuple[Any, ...]]:
+        init_wrapper = self._resultset_wrapper.init
+        iterable_wrapper = self._resultset_wrapper.iterable
+        match len(rows[0]):
+            case 1:
+                if init_wrapper is not None:
+                    return [init_wrapper(row[0]) for row in rows]
+                else:
+                    return [(row[0],) for row in rows]
+            ### START OF AUTO-GENERATED BLOCK FOR convert_pass ###
+            case 2:
+                if init_wrapper is not None:
+                    return [init_wrapper(row[0], row[1]) for row in rows]
+                else:
+                    return [(row[0], row[1]) for row in rows]
+            case 3:
+                if init_wrapper is not None:
+                    return [init_wrapper(row[0], row[1], row[2]) for row in rows]
+                else:
+                    return [(row[0], row[1], row[2]) for row in rows]
+            case 4:
+                if init_wrapper is not None:
+                    return [init_wrapper(row[0], row[1], row[2], row[3]) for row in rows]
+                else:
+                    return [(row[0], row[1], row[2], row[3]) for row in rows]
+            case 5:
+                if init_wrapper is not None:
+                    return [init_wrapper(row[0], row[1], row[2], row[3], row[4]) for row in rows]
+                else:
+                    return [(row[0], row[1], row[2], row[3], row[4]) for row in rows]
+            case 6:
+                if init_wrapper is not None:
+                    return [init_wrapper(row[0], row[1], row[2], row[3], row[4], row[5]) for row in rows]
+                else:
+                    return [(row[0], row[1], row[2], row[3], row[4], row[5]) for row in rows]
+            case 7:
+                if init_wrapper is not None:
+                    return [init_wrapper(row[0], row[1], row[2], row[3], row[4], row[5], row[6]) for row in rows]
+                else:
+                    return [(row[0], row[1], row[2], row[3], row[4], row[5], row[6]) for row in rows]
+
+            ### END OF AUTO-GENERATED BLOCK FOR convert_pass ###
+            case _:
+                return [iterable_wrapper(row.values()) for row in rows]
 
     def convert_row(self, row: asyncpg.Record) -> tuple[Any, ...]:
         """
