@@ -1,4 +1,8 @@
 @echo off
+rem Type-safe queries for asyncpg.
+rem
+rem Copyright 2025-2026, Levente Hunyadi
+rem https://github.com/hunyadi/asyncpg_typed
 setlocal
 
 set PYTHON_310="C:\Program Files\Python310\python.exe"
@@ -7,6 +11,10 @@ set PYTHON_312="C:\Program Files\Python312\python.exe"
 set PYTHON_313="C:\Program Files\Python313\python.exe"
 set PYTHON_314="C:\Program Files\Python314\python.exe"
 
+%PYTHON_314% -m ruff check
+if errorlevel 1 goto error
+%PYTHON_314% -m ruff format --check
+if errorlevel 1 goto error
 %PYTHON_314% -m mypy asyncpg_typed
 if errorlevel 1 goto error
 %PYTHON_314% -m mypy tests

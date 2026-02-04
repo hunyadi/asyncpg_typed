@@ -37,6 +37,7 @@
         "mypy",
         "nummultirange",
         "numrange",
+        "PyPI",
         "resultset",
         "setlocal",
         "setuptools",

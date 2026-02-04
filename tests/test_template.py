@@ -8,12 +8,21 @@ Type-safe queries for asyncpg.
 
 import sys
 import unittest
+from typing import TYPE_CHECKING
 
-from asyncpg_typed import sql
+from asyncpg_typed import SQLExpression, sql
 from tests.connection import get_connection
 
 if sys.version_info >= (3, 14):
     from string.templatelib import Interpolation, Template
+elif TYPE_CHECKING:
+
+    class Interpolation:
+        def __init__(self, index: int) -> None:
+            pass
+
+    def Template(*args: str | Interpolation) -> SQLExpression:
+        return "SELECT 1"
 
 
 @unittest.skipUnless(sys.version_info >= (3, 14), "requires Python 3.14 or later")

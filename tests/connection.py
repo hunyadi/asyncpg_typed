@@ -14,6 +14,11 @@ import asyncpg
 async def get_connection() -> AsyncIterator[asyncpg.Connection]:
     conn = await asyncpg.connect(host="localhost", port=5432, user="postgres", password="postgres")
     try:
+        await conn.execute(
+            """--sql
+            CREATE EXTENSION IF NOT EXISTS vector;
+            """
+        )
         yield conn
     finally:
         await conn.close()
