@@ -63,16 +63,7 @@ class NoneTypeError(TypeError):
     "Raised when a column marked as required contains a `NULL` value."
 
 
-if sys.version_info >= (3, 11):
-
-    def is_enum_type(typ: Any) -> TypeGuard[type[enum.Enum]]:
-        """
-        `True` if the specified type is an enumeration type.
-        """
-
-        return isinstance(typ, enum.EnumType)
-
-else:
+if sys.version_info < (3, 11):
 
     def is_enum_type(typ: Any) -> TypeGuard[type[enum.Enum]]:
         """
@@ -81,6 +72,16 @@ else:
 
         # use an explicit isinstance(..., type) check to filter out special forms like generics
         return isinstance(typ, type) and issubclass(typ, enum.Enum)
+
+
+else:
+
+    def is_enum_type(typ: Any) -> TypeGuard[type[enum.Enum]]:
+        """
+        `True` if the specified type is an enumeration type.
+        """
+
+        return isinstance(typ, enum.EnumType)
 
 
 def is_union_type(tp: Any) -> bool:

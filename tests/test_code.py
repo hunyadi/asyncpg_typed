@@ -6,6 +6,7 @@ Type-safe queries for asyncpg.
 
 import random
 import re
+import sys
 import unittest
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
@@ -239,7 +240,10 @@ class TestCode(unittest.TestCase):
         with open(Path(__file__).parent / "sample.py", "w") as f:
             print("from datetime import date, datetime, time, timedelta", file=f)
             print("from decimal import Decimal", file=f)
-            print("from typing import assert_type", file=f)
+            if sys.version_info < (3, 11):
+                print("from typing_extensions import assert_type", file=f)
+            else:
+                print("from typing import assert_type", file=f)
             print("from uuid import UUID", file=f)
             print(file=f)
             print("from asyncpg_typed import sql", file=f)
