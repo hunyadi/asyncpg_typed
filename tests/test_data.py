@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 from asyncpg import Box, Circle, Line, LineSegment, Path, Point, Polygon, Range
 
 from asyncpg_typed import JsonType, sql
-from tests.connection import get_connection
+from tests.connection import get_connection, set_timestamp_codec
 
 if sys.version_info < (3, 11):
 
@@ -122,7 +122,18 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             """,
             resultset=tuple[date, time, time, datetime, datetime, timedelta],
         )
+        select_datetime_sql = sql(
+            """
+            --sql
+            SELECT date_time_value, date_time_zone_value
+            FROM datetime_types
+            ORDER BY id;
+            """,
+            resultset=tuple[datetime, datetime],
+        )
 
+        now_naive = datetime.now(tz=None)
+        now_utc = datetime.now(tz=timezone.utc)
         async with get_connection() as conn:
             await create_sql.execute(conn)
             records = [
@@ -130,21 +141,34 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
                     date.today(),
                     time(0, 0, 0, tzinfo=None),
                     time(23, 59, 59, tzinfo=timezone.utc),
-                    datetime.now(tz=None),
-                    datetime.now(tz=timezone.utc),
+                    now_naive,
+                    now_utc,
                     timedelta(days=12, hours=23, minutes=59, seconds=59),
                 ),
                 (
                     date.today(),
                     time(23, 59, 59, tzinfo=None),
                     time(0, 0, 0, tzinfo=timezone(timedelta(hours=1), "Europe/Budapest")),
-                    datetime.now(tz=None),
-                    datetime.now(tz=timezone.utc),
+                    now_naive,
+                    now_utc,
                     timedelta(days=12, hours=23, minutes=59, seconds=59),
                 ),
             ]
             await insert_sql.executemany(conn, records)
             self.assertEqual(await select_sql.fetch(conn), records)
+
+            await set_timestamp_codec(conn)
+            records_utc = [
+                (
+                    now_naive.replace(tzinfo=timezone.utc),
+                    now_utc,
+                ),
+                (
+                    now_naive.replace(tzinfo=timezone.utc),
+                    now_utc,
+                ),
+            ]
+            self.assertEqual(await select_datetime_sql.fetch(conn), records_utc)
 
     async def test_sequence_types(self) -> None:
         create_sql = sql(
