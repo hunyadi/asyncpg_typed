@@ -10,14 +10,15 @@ set PYTHON_311="C:\Program Files\Python311\python.exe"
 set PYTHON_312="C:\Program Files\Python312\python.exe"
 set PYTHON_313="C:\Program Files\Python313\python.exe"
 set PYTHON_314="C:\Program Files\Python314\python.exe"
+set PYTHON=python
 
-%PYTHON_314% -m ruff check
+%PYTHON% -m ruff check
 if errorlevel 1 goto error
-%PYTHON_314% -m ruff format --check
+%PYTHON% -m ruff format --check
 if errorlevel 1 goto error
-%PYTHON_314% -m mypy asyncpg_typed
+%PYTHON% -m mypy asyncpg_typed
 if errorlevel 1 goto error
-%PYTHON_314% -m mypy tests
+%PYTHON% -m mypy tests
 if errorlevel 1 goto error
 
 if exist %PYTHON_310% %PYTHON_310% -m unittest discover
@@ -31,14 +32,13 @@ if errorlevel 1 goto error
 if exist %PYTHON_314% %PYTHON_314% -m unittest discover
 if errorlevel 1 goto error
 
-%PYTHON_314% -m ruff check
+%PYTHON% -m ruff check
 if errorlevel 1 goto error
-%PYTHON_314% -m ruff format
+%PYTHON% -m ruff format
 if errorlevel 1 goto error
-
-%PYTHON_314% -m mypy asyncpg_typed
+%PYTHON% -m mypy asyncpg_typed
 if errorlevel 1 goto error
-%PYTHON_314% -m mypy tests
+%PYTHON% -m mypy tests
 if errorlevel 1 goto error
 
 del tests\sample.py

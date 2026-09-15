@@ -43,7 +43,7 @@ vector = [
 ]
 dev = [
     "asyncpg-stubs >= 0.31",
-    "build >= 1.5",
+    "build >= 1.6",
     "mypy >= 2.3",
     "ruff >= 0.16"
 ]
