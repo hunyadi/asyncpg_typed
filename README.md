@@ -95,10 +95,10 @@ Instantiate a SQL object with the `sql` function:
 def sql(
     stmt: LiteralString | string.templatelib.Template,
     *,
-    args: None | type[tuple[P1, P2]] | type[tuple[P1, P2, P3]] | ... = None,
-    resultset: None | type[tuple[R1, R2]] | type[tuple[R1, R2, R3]] | ... = None,
-    arg: None | type[P] = None,
-    result: None | type[R] = None,
+    args: None | TypeForm[tuple[P1, P2]] | TypeForm[tuple[P1, P2, P3]] | ... = None,
+    resultset: None | TypeForm[tuple[R1, R2]] | TypeForm[tuple[R1, R2, R3]] | ... = None,
+    arg: None | TypeForm[P] = None,
+    result: None | TypeForm[R] = None,
 ) -> _SQL: ...
 ```
 

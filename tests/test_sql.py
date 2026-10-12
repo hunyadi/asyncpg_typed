@@ -6,10 +6,9 @@ Type-safe queries for asyncpg.
 
 import unittest
 from random import randint, sample
-from types import UnionType
 from typing import Any, NamedTuple
 
-from asyncpg_typed import CountMismatchError, JsonType, NameMismatchError, NoneTypeError, TypeMismatchError, sql, unsafe_sql
+from asyncpg_typed import CountMismatchError, JsonType, NameMismatchError, NoneTypeError, TypeForm, TypeMismatchError, sql, unsafe_sql
 from tests.connection import get_connection
 
 
@@ -281,7 +280,19 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(TypeMismatchError):
                 await select_sql.fetch(conn)
 
-    async def test_none(self) -> None:
+    async def test_none_nullable(self) -> None:
+        select_sql = sql(
+            """
+            --sql
+            SELECT NULL::bigint;
+            """,
+            result=int | None,
+        )
+
+        async with get_connection() as conn:
+            self.assertIsNone(await select_sql.fetchval(conn))
+
+    async def test_none_type_error(self) -> None:
         select_sql = sql(
             """
             --sql
@@ -321,20 +332,20 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
         async with get_connection() as conn:
             for count in range(1, max_count + 1):
                 for index in range(count):
-                    params: list[type[Any] | UnionType] = [int] * count
+                    params: list[TypeForm[Any]] = [int] * count
                     params[index] = int | None
 
                     # `NULL` for the active slot (but consuming all input parameters), or the input number otherwise
                     expr: list[str] = [f"${i + 1}::int" for i in range(count)]
                     expr[index] = f"NULLIF(GREATEST({', '.join(f'${i + 1}::int' for i in range(max_count))}), {max_value})"
 
-                    passthrough_sql = unsafe_sql(
+                    passthrough_sql = unsafe_sql(  # pyright: ignore[reportUnknownVariableType]
                         f"SELECT {', '.join(expr)};",
                         args=tuple[int, int, int, int, int, int, int, int, int, int],
                         resultset=tuple[tuple(params)],  # type: ignore[misc]
                     )  # type: ignore[call-overload]
 
-                    rows = await passthrough_sql.fetch(conn, *args)
+                    rows = await passthrough_sql.fetch(conn, *args)  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
                     resultset: list[int | None] = [args[i] for i in range(count)]
                     resultset[index] = None
                     self.assertEqual(rows, [tuple(resultset)])
@@ -346,18 +357,18 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             max_count = 10
             for count in range(1, max_count + 1):
                 for index in range(count):
-                    params: list[type[Any] | UnionType] = [str | None] * count
+                    params: list[TypeForm[Any]] = [str | None] * count
                     params[index] = JsonType
 
                     expr: list[str] = ["NULL"] * count
                     expr[index] = f"jsonb_build_object('value', {index})"
 
-                    passthrough_sql = unsafe_sql(
+                    passthrough_sql = unsafe_sql(  # pyright: ignore[reportUnknownVariableType]
                         f"SELECT {', '.join(expr)};",
                         resultset=tuple[tuple(params)],  # type: ignore[misc]
                     )  # type: ignore[call-overload]
 
-                    rows = await passthrough_sql.fetch(conn)
+                    rows = await passthrough_sql.fetch(conn)  # pyright: ignore[reportUnknownVariableType]
                     resultset: list[str | JsonType] = [None for _ in range(count)]
                     resultset[index] = {"value": index}
                     self.assertEqual(rows, [tuple(resultset)])

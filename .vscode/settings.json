@@ -14,7 +14,12 @@
         "editor.formatOnSave": true,
         "editor.defaultFormatter": "charliermarsh.ruff"
     },
+    "mypy-type-checker.importStrategy": "fromEnvironment",
+    "mypy-type-checker.args": [
+        "--enable-incomplete-feature=TypeForm"
+    ],
     "python.analysis.typeCheckingMode": "strict",
+    "python-envs.defaultEnvManager": "ms-python.python:system",
     "cSpell.words": [
         "asyncpg",
         "bpchar",

@@ -10,7 +10,7 @@ set PYTHON_311="C:\Program Files\Python311\python.exe"
 set PYTHON_312="C:\Program Files\Python312\python.exe"
 set PYTHON_313="C:\Program Files\Python313\python.exe"
 set PYTHON_314="C:\Program Files\Python314\python.exe"
-set PYTHON=python
+set PYTHON=python3
 
 %PYTHON% -m ruff check
 if errorlevel 1 goto error
@@ -30,6 +30,8 @@ if errorlevel 1 goto error
 if exist %PYTHON_313% %PYTHON_313% -m unittest discover
 if errorlevel 1 goto error
 if exist %PYTHON_314% %PYTHON_314% -m unittest discover
+if errorlevel 1 goto error
+%PYTHON% -m unittest discover
 if errorlevel 1 goto error
 
 %PYTHON% -m ruff check

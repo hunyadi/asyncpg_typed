@@ -34,11 +34,14 @@ if sys.version_info < (3, 11):
 else:
     from typing import LiteralString, TypeVarTuple, Unpack
 
+if sys.version_info < (3, 15):
+    from typing_extensions import TypeForm
+else:
+    from typing import TypeForm
+
 JsonType = None | bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
 
 RequiredJsonType = bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
-
-TargetType: TypeAlias = type[Any] | UnionType
 
 Connection: TypeAlias = asyncpg.Connection | asyncpg.pool.PoolConnectionProxy
 
@@ -333,7 +336,7 @@ class _TypeVerifier:
         if py_extra:
             raise EnumMismatchError(f"expected: Python enum type `{type_to_str(data_type)}` to match values of PostgreSQL enum type `{pg_type.name}` for {pg_name}; got extra value(s): {', '.join(f'`{val}`' for val in py_extra)})")
 
-    async def check_data_type(self, pg_name: str, pg_type: asyncpg.Type, data_type: TargetType) -> None:
+    async def check_data_type(self, pg_name: str, pg_type: asyncpg.Type, data_type: TypeForm[Any]) -> None:
         """
         Verifies if the Python target type can represent the PostgreSQL source type.
         """
@@ -381,7 +384,7 @@ class _TypeVerifier:
 @dataclass(frozen=True)
 class _Placeholder:
     ordinal: int
-    data_type: TargetType
+    data_type: TypeForm[Any]
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.ordinal}, {self.data_type!r})"
@@ -411,7 +414,7 @@ class _SQLObject:
     """
 
     _parameter_data_types: tuple[_Placeholder, ...]
-    _resultset_data_types: tuple[TargetType, ...]
+    _resultset_data_types: tuple[TypeForm[Any], ...]
     _resultset_column_names: tuple[str, ...] | None
     _resultset_wrapper: _ResultsetWrapper
     _parameter_cast: int
@@ -427,7 +430,7 @@ class _SQLObject:
         return self._parameter_data_types
 
     @property
-    def resultset_data_types(self) -> tuple[TargetType, ...]:
+    def resultset_data_types(self) -> tuple[TypeForm[Any], ...]:
         "Expected column data types in the result-set."
 
         return self._resultset_data_types
@@ -441,8 +444,8 @@ class _SQLObject:
     def __init__(
         self,
         *,
-        args: tuple[TargetType, ...],
-        resultset: tuple[TargetType, ...],
+        args: tuple[TypeForm[Any], ...],
+        resultset: tuple[TypeForm[Any], ...],
         names: tuple[str, ...] | None,
         wrapper: _ResultsetWrapper,
     ) -> None:
@@ -890,8 +893,8 @@ if sys.version_info >= (3, 14):
             self,
             template: Template,
             *,
-            args: tuple[TargetType, ...],
-            resultset: tuple[TargetType, ...],
+            args: tuple[TypeForm[Any], ...],
+            resultset: tuple[TypeForm[Any], ...],
             names: tuple[str, ...] | None,
             wrapper: _ResultsetWrapper,
         ) -> None:
@@ -909,11 +912,13 @@ if sys.version_info >= (3, 14):
 
             if len(self.parameter_data_types) > 0:
 
-                def _to_placeholder(ip: Interpolation) -> _Placeholder:
-                    ordinal = int(ip.value)
+                def _to_placeholder(ip: Interpolation[Any]) -> _Placeholder:  # type: ignore[type-arg]
+                    if not isinstance(ip.value, int):
+                        raise TypeError(f"interpolation `{ip.expression}` is not an integer")
+                    ordinal = ip.value
                     if not (0 < ordinal <= len(self.parameter_data_types)):
                         raise IndexError(f"interpolation `{ip.expression}` is an ordinal out of range; expected: 0 < value <= {len(self.parameter_data_types)}")
-                    return self.parameter_data_types[int(ip.value) - 1]
+                    return self.parameter_data_types[ordinal - 1]
 
                 self._placeholders = tuple(_to_placeholder(ip) for ip in template.interpolations)
             else:
@@ -942,8 +947,8 @@ class _SQLString(_SQLObject):
         self,
         sql: str,
         *,
-        args: tuple[TargetType, ...],
-        resultset: tuple[TargetType, ...],
+        args: tuple[TypeForm[Any], ...],
+        resultset: tuple[TypeForm[Any], ...],
         names: tuple[str, ...] | None,
         wrapper: _ResultsetWrapper,
     ) -> None:
@@ -1123,25 +1128,25 @@ class SQLFactory:
     @overload
     def sql(self, stmt: SQLExpression) -> SQL_P0: ...
     @overload
-    def sql(self, stmt: SQLExpression, *, result: type[R1]) -> SQL_R1_P0[R1]: ...
+    def sql(self, stmt: SQLExpression, *, result: TypeForm[R1]) -> SQL_R1_P0[R1]: ...
     @overload
-    def sql(self, stmt: SQLExpression, *, resultset: type[RS]) -> SQL_RX_P0[RS]: ...
+    def sql(self, stmt: SQLExpression, *, resultset: TypeForm[RS]) -> SQL_RX_P0[RS]: ...
     @overload
-    def sql(self, stmt: SQLExpression, *, arg: type[P1]) -> SQL_PX[P1]: ...
+    def sql(self, stmt: SQLExpression, *, arg: TypeForm[P1]) -> SQL_PX[P1]: ...
     @overload
-    def sql(self, stmt: SQLExpression, *, arg: type[P1], result: type[R1]) -> SQL_R1_PX[R1, P1]: ...
+    def sql(self, stmt: SQLExpression, *, arg: TypeForm[P1], result: TypeForm[R1]) -> SQL_R1_PX[R1, P1]: ...
     @overload
-    def sql(self, stmt: SQLExpression, *, arg: type[P1], resultset: type[RS]) -> SQL_RX_PX[RS, P1]: ...
+    def sql(self, stmt: SQLExpression, *, arg: TypeForm[P1], resultset: TypeForm[RS]) -> SQL_RX_PX[RS, P1]: ...
     @overload
-    def sql(self, stmt: SQLExpression, *, args: type[tuple[P1, Unpack[PX]]]) -> SQL_PX[P1, Unpack[PX]]: ...
+    def sql(self, stmt: SQLExpression, *, args: TypeForm[tuple[P1, Unpack[PX]]]) -> SQL_PX[P1, Unpack[PX]]: ...
     @overload
-    def sql(self, stmt: SQLExpression, *, args: type[tuple[P1, Unpack[PX]]], result: type[R1]) -> SQL_R1_PX[R1, P1, Unpack[PX]]: ...
+    def sql(self, stmt: SQLExpression, *, args: TypeForm[tuple[P1, Unpack[PX]]], result: TypeForm[R1]) -> SQL_R1_PX[R1, P1, Unpack[PX]]: ...
     @overload
-    def sql(self, stmt: SQLExpression, *, args: type[tuple[P1, Unpack[PX]]], resultset: type[RS]) -> SQL_RX_PX[RS, P1, Unpack[PX]]: ...
+    def sql(self, stmt: SQLExpression, *, args: TypeForm[tuple[P1, Unpack[PX]]], resultset: TypeForm[RS]) -> SQL_RX_PX[RS, P1, Unpack[PX]]: ...
 
     ### END OF AUTO-GENERATED BLOCK FOR sql ###
 
-    def sql(self, stmt: SQLExpression, *, args: type[Any] | None = None, resultset: type[Any] | None = None, arg: type[Any] | None = None, result: type[Any] | None = None) -> _SQL:
+    def sql(self, stmt: SQLExpression, *, args: TypeForm[Any] | None = None, resultset: TypeForm[Any] | None = None, arg: TypeForm[Any] | None = None, result: TypeForm[Any] | None = None) -> _SQL:
         """
         Creates a SQL statement with associated type information.
 
@@ -1170,25 +1175,25 @@ class SQLFactory:
     @overload
     def unsafe_sql(self, stmt: str) -> SQL_P0: ...
     @overload
-    def unsafe_sql(self, stmt: str, *, result: type[R1]) -> SQL_R1_P0[R1]: ...
+    def unsafe_sql(self, stmt: str, *, result: TypeForm[R1]) -> SQL_R1_P0[R1]: ...
     @overload
-    def unsafe_sql(self, stmt: str, *, resultset: type[RS]) -> SQL_RX_P0[RS]: ...
+    def unsafe_sql(self, stmt: str, *, resultset: TypeForm[RS]) -> SQL_RX_P0[RS]: ...
     @overload
-    def unsafe_sql(self, stmt: str, *, arg: type[P1]) -> SQL_PX[P1]: ...
+    def unsafe_sql(self, stmt: str, *, arg: TypeForm[P1]) -> SQL_PX[P1]: ...
     @overload
-    def unsafe_sql(self, stmt: str, *, arg: type[P1], result: type[R1]) -> SQL_R1_PX[R1, P1]: ...
+    def unsafe_sql(self, stmt: str, *, arg: TypeForm[P1], result: TypeForm[R1]) -> SQL_R1_PX[R1, P1]: ...
     @overload
-    def unsafe_sql(self, stmt: str, *, arg: type[P1], resultset: type[RS]) -> SQL_RX_PX[RS, P1]: ...
+    def unsafe_sql(self, stmt: str, *, arg: TypeForm[P1], resultset: TypeForm[RS]) -> SQL_RX_PX[RS, P1]: ...
     @overload
-    def unsafe_sql(self, stmt: str, *, args: type[tuple[P1, Unpack[PX]]]) -> SQL_PX[P1, Unpack[PX]]: ...
+    def unsafe_sql(self, stmt: str, *, args: TypeForm[tuple[P1, Unpack[PX]]]) -> SQL_PX[P1, Unpack[PX]]: ...
     @overload
-    def unsafe_sql(self, stmt: str, *, args: type[tuple[P1, Unpack[PX]]], result: type[R1]) -> SQL_R1_PX[R1, P1, Unpack[PX]]: ...
+    def unsafe_sql(self, stmt: str, *, args: TypeForm[tuple[P1, Unpack[PX]]], result: TypeForm[R1]) -> SQL_R1_PX[R1, P1, Unpack[PX]]: ...
     @overload
-    def unsafe_sql(self, stmt: str, *, args: type[tuple[P1, Unpack[PX]]], resultset: type[RS]) -> SQL_RX_PX[RS, P1, Unpack[PX]]: ...
+    def unsafe_sql(self, stmt: str, *, args: TypeForm[tuple[P1, Unpack[PX]]], resultset: TypeForm[RS]) -> SQL_RX_PX[RS, P1, Unpack[PX]]: ...
 
     ### END OF AUTO-GENERATED BLOCK FOR unsafe_sql ###
 
-    def unsafe_sql(self, stmt: str, *, args: type[Any] | None = None, resultset: type[Any] | None = None, arg: type[Any] | None = None, result: type[Any] | None = None) -> _SQL:
+    def unsafe_sql(self, stmt: str, *, args: TypeForm[Any] | None = None, resultset: TypeForm[Any] | None = None, arg: TypeForm[Any] | None = None, result: TypeForm[Any] | None = None) -> _SQL:
         """
         Creates a SQL statement with associated type information from a string.
 
@@ -1208,7 +1213,7 @@ class SQLFactory:
 
 
 def _sql_args_resultset(
-    *, args: type[Any] | None = None, resultset: type[Any] | None = None, arg: type[Any] | None = None, result: type[Any] | None = None
+    *, args: TypeForm[Any] | None = None, resultset: TypeForm[Any] | None = None, arg: TypeForm[Any] | None = None, result: TypeForm[Any] | None = None
 ) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[str, ...] | None, _ResultsetWrapper]:
     "Parses an argument/resultset signature into input/output types."
 
@@ -1218,7 +1223,7 @@ def _sql_args_resultset(
         raise TypeError("expected: either `resultset` or `result`; got: both")
 
     if args is not None:
-        if hasattr(args, "_asdict") and hasattr(args, "_fields"):
+        if isinstance(args, type) and hasattr(args, "_asdict") and hasattr(args, "_fields"):
             # named tuple
             input_data_types = tuple(tp for tp in args.__annotations__.values())
         else:
@@ -1232,11 +1237,11 @@ def _sql_args_resultset(
         input_data_types = ()
 
     if resultset is not None:
-        if hasattr(resultset, "_asdict") and hasattr(resultset, "_fields") and hasattr(resultset, "_make"):
+        if isinstance(resultset, type) and hasattr(resultset, "_asdict") and hasattr(resultset, "_fields") and hasattr(resultset, "_make"):
             # named tuple
             output_data_types = tuple(tp for tp in resultset.__annotations__.values())
-            names = tuple(f for f in resultset._fields)
-            wrapper = _ResultsetWrapper(resultset, resultset._make)
+            names = tuple(str(f) for f in resultset._fields)  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType, reportUnknownMemberType]
+            wrapper = _ResultsetWrapper(resultset, resultset._make)  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
         else:
             # regular tuple
             if get_origin(resultset) is not tuple:

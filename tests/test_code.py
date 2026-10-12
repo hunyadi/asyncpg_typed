@@ -74,14 +74,14 @@ def _arg_list(p: int, r: int) -> str:
     args: list[str] = []
 
     if p == 1:
-        args.append("arg: type[P1]")
+        args.append("arg: TypeForm[P1]")
     elif p > 1:
-        args.append("args: type[tuple[P1, Unpack[PX]]]")
+        args.append("args: TypeForm[tuple[P1, Unpack[PX]]]")
 
     if r == 1:
-        args.append("result: type[R1]")
+        args.append("result: TypeForm[R1]")
     elif r > 1:
-        args.append("resultset: type[RS]")
+        args.append("resultset: TypeForm[RS]")
 
     if args:
         return f", *, {', '.join(args)}"
