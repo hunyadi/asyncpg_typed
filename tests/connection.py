@@ -4,7 +4,7 @@ Type-safe queries for asyncpg.
 :see: https://github.com/hunyadi/asyncpg_typed
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -41,7 +41,7 @@ async def set_timestamp_codec(conn: asyncpg.Connection) -> None:
 
 
 @asynccontextmanager
-async def get_connection() -> AsyncIterator[asyncpg.Connection]:
+async def get_connection() -> AsyncGenerator[asyncpg.Connection, None]:
     conn = await asyncpg.connect(host="localhost", port=5432, user="postgres", password="postgres")
     try:
         await conn.execute(
