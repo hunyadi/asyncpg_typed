@@ -702,7 +702,20 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
             """,
-            args=tuple[Range[int], Range[int], Range[Decimal], Range[datetime], Range[datetime], Range[date], list[Range[int]], list[Range[int]], list[Range[Decimal]], list[Range[datetime]], list[Range[datetime]], list[Range[date]]],
+            args=tuple[
+                Range[int],
+                Range[int],
+                Range[Decimal],
+                Range[datetime],
+                Range[datetime],
+                Range[date],
+                list[Range[int]],
+                list[Range[int]],
+                list[Range[Decimal]],
+                list[Range[datetime]],
+                list[Range[datetime]],
+                list[Range[date]],
+            ],
         )
 
         select_sql = sql(
@@ -714,7 +727,20 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
             FROM range_types
             ORDER BY id;
             """,
-            resultset=tuple[Range[int], Range[int], Range[Decimal], Range[datetime], Range[datetime], Range[date], list[Range[int]], list[Range[int]], list[Range[Decimal]], list[Range[datetime]], list[Range[datetime]], list[Range[date]]],
+            resultset=tuple[
+                Range[int],
+                Range[int],
+                Range[Decimal],
+                Range[datetime],
+                Range[datetime],
+                Range[date],
+                list[Range[int]],
+                list[Range[int]],
+                list[Range[Decimal]],
+                list[Range[datetime]],
+                list[Range[datetime]],
+                list[Range[date]],
+            ],
         )
 
         async with get_connection() as conn:
@@ -729,7 +755,10 @@ class TestDataTypes(unittest.IsolatedAsyncioTestCase):
                 [Range(-2_147_483_648, -1), Range(1, 2_147_483_647)],
                 [Range(-9_223_372_036_854_775_808, -1), Range(1, 9_223_372_036_854_775_807)],
                 [Range(Decimal("0.1"), Decimal("0.2")), Range(Decimal("0.3"), Decimal("0.4")), Range(Decimal("0.5"), Decimal("0.6"))],
-                [Range(datetime(1982, 10, 23, 1, 2, 3), datetime(1982, 10, 24, 10, 20, 30)), Range(datetime(1984, 1, 1, 0, 0, 0), datetime(1990, 8, 12, 23, 59, 59))],
+                [
+                    Range(datetime(1982, 10, 23, 1, 2, 3), datetime(1982, 10, 24, 10, 20, 30)),
+                    Range(datetime(1984, 1, 1, 0, 0, 0), datetime(1990, 8, 12, 23, 59, 59)),
+                ],
                 [Range(datetime(1984, 1, 1, 0, 0, 0, tzinfo=timezone.utc), datetime(1990, 10, 23, 23, 59, 59, tzinfo=timezone.utc))],
                 [Range(date(1984, 1, 1), date(1990, 10, 23)), Range(date(2000, 1, 1), date(2022, 10, 23))],
             )

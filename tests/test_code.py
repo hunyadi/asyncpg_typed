@@ -18,7 +18,7 @@ from uuid import UUID
 
 
 def _write_convert_cast(out: TextIO) -> None:
-    "Generates code for transforming a result-set with an active conversion function."
+    """Generates code for transforming a result-set with an active conversion function."""
 
     for count in range(2, 8):
         print(f"            case {count}:", file=out)
@@ -27,17 +27,25 @@ def _write_convert_cast(out: TextIO) -> None:
         print(r"                if init_wrapper is not None:", file=out)
         print(r"                    return [init_wrapper(", file=out)
         for index in range(0, count):
-            print(f"                        conv_{chr(ord('a') + index)}(value) if (value := row[{index}]) is not None and cast_{chr(ord('a') + index)} else value,", file=out)
+            print(
+                f"                        conv_{chr(ord('a') + index)}(value) if (value := row[{index}]) is not None "
+                f"and cast_{chr(ord('a') + index)} else value,",
+                file=out,
+            )
         print(r"                    ) for row in rows]", file=out)
         print(r"                else:", file=out)
         print(r"                    return [(", file=out)
         for index in range(0, count):
-            print(f"                        conv_{chr(ord('a') + index)}(value) if (value := row[{index}]) is not None and cast_{chr(ord('a') + index)} else value,", file=out)
+            print(
+                f"                        conv_{chr(ord('a') + index)}(value) if (value := row[{index}]) is not None "
+                f"and cast_{chr(ord('a') + index)} else value,",
+                file=out,
+            )
         print(r"                    ) for row in rows]", file=out)
 
 
 def _write_convert_pass(out: TextIO) -> None:
-    "Generates code for transforming a result-set with no conversion function specified."
+    """Generates code for transforming a result-set with no conversion function specified."""
 
     for count in range(2, 8):
         column_list = ", ".join(f"row[{index}]" for index in range(0, count))
@@ -108,7 +116,7 @@ def _param_list(p: int, r: int) -> str:
 
 
 def _write_classes(out: TextIO) -> None:
-    "Generates code for `Protocol` classes to match argument/resultset signature combinations with permitted operations."
+    """Generates code for `Protocol` classes to match argument/resultset signature combinations with permitted operations."""
 
     for p in range(2):
         if p > 0:
@@ -175,7 +183,7 @@ def _write_function(out: TextIO, name: str, stmt: str, p: int, r: int) -> None:
 
 
 def _write_sql(out: TextIO) -> None:
-    "Generates code for the function `sql` to accept various argument/resultset signature combinations."
+    """Generates code for the function `sql` to accept various argument/resultset signature combinations."""
 
     for p in range(3):
         for r in range(3):
@@ -183,7 +191,7 @@ def _write_sql(out: TextIO) -> None:
 
 
 def _write_unsafe_sql(out: TextIO) -> None:
-    "Generates code for the function `unsafe_sql` to accept various argument/resultset signature combinations."
+    """Generates code for the function `unsafe_sql` to accept various argument/resultset signature combinations."""
 
     for p in range(3):
         for r in range(3):
@@ -209,7 +217,7 @@ def _update_code(source_code: str, block_name: str, writer: Callable[[TextIO], N
 
 
 def _instantiate(tp: type[Any]) -> str:
-    "Writes code to instantiate an object of the given type."
+    """Writes code to instantiate an object of the given type."""
 
     if tp is datetime:
         return "datetime.now()"

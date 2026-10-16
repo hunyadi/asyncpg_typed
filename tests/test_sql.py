@@ -237,7 +237,9 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             except RollbackException:
                 pass
 
-            self.assertEqual(await select_sql.fetch(conn), [(False, 1, "one"), (True, 2, "two"), (False, 3, "three"), (False, 23, "twenty-three"), (True, 64, None)])
+            self.assertEqual(
+                await select_sql.fetch(conn), [(False, 1, "one"), (True, 2, "two"), (False, 3, "three"), (False, 23, "twenty-three"), (True, 64, None)]
+            )
             self.assertEqual(await select_where_sql.fetch(conn, False, 2), [(False, 3, "three"), (False, 23, "twenty-three")])
             self.assertEqual(await select_where_sql.fetchrow(conn, True, 32), (True, 64, None))
             self.assertEqual(await select_column_sql.fetchcol(conn), [1, 2, 3, 23, 64])
@@ -323,7 +325,7 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(rows, [numbers])
 
     async def test_nullable(self) -> None:
-        "Checks nullability with various combinations of column count and `NULL` value position in the result-set."
+        """Checks nullability with various combinations of column count and `NULL` value position in the result-set."""
 
         max_count = 10
         args = sample(range(-2_147_483_648, 2_147_483_647), max_count)
@@ -351,7 +353,7 @@ class TestSQL(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(rows, [tuple(resultset)])
 
     async def test_conversion(self) -> None:
-        "Checks conversion with various combinations of column count and converted value position in the result-set."
+        """Checks conversion with various combinations of column count and converted value position in the result-set."""
 
         async with get_connection() as conn:
             max_count = 10

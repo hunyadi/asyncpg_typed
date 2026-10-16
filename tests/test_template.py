@@ -43,13 +43,27 @@ class TestTemplate(unittest.IsolatedAsyncioTestCase):
 
         insert_sql = sql(
             # use template object (as opposed to t-string) to ensure syntax compatibility with earlier versions of Python
-            Template("INSERT INTO sample_data (boolean_value, integer_value, string_value) VALUES (", Interpolation(1), ", ", Interpolation(2), ", ", Interpolation(3), ");"),
+            Template(
+                "INSERT INTO sample_data (boolean_value, integer_value, string_value) VALUES (",
+                Interpolation(1),
+                ", ",
+                Interpolation(2),
+                ", ",
+                Interpolation(3),
+                ");",
+            ),
             args=tuple[bool, int, str | None],
         )
 
         select_where_sql = sql(
             # use template object (as opposed to t-string) to ensure syntax compatibility with earlier versions of Python
-            Template("SELECT boolean_value, integer_value, string_value FROM sample_data WHERE boolean_value = ", Interpolation(1), " AND integer_value > ", Interpolation(2), " ORDER BY integer_value;"),
+            Template(
+                "SELECT boolean_value, integer_value, string_value FROM sample_data WHERE boolean_value = ",
+                Interpolation(1),
+                " AND integer_value > ",
+                Interpolation(2),
+                " ORDER BY integer_value;",
+            ),
             args=tuple[bool, int],
             resultset=tuple[bool, int, str | None],
         )

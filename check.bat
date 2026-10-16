@@ -34,7 +34,7 @@ if errorlevel 1 goto error
 %PYTHON% -m unittest discover
 if errorlevel 1 goto error
 
-%PYTHON% -m ruff check
+%PYTHON% -m ruff check --fix
 if errorlevel 1 goto error
 %PYTHON% -m ruff format
 if errorlevel 1 goto error

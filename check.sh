@@ -15,7 +15,7 @@ $PYTHON_EXECUTABLE -m mypy tests
 
 $PYTHON_EXECUTABLE -m unittest discover
 
-$PYTHON_EXECUTABLE -m ruff check
+$PYTHON_EXECUTABLE -m ruff check --fix
 $PYTHON_EXECUTABLE -m ruff format
 $PYTHON_EXECUTABLE -m mypy asyncpg_typed
 $PYTHON_EXECUTABLE -m mypy tests

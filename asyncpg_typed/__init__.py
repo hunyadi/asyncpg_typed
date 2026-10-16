@@ -35,9 +35,9 @@ else:
     from typing import LiteralString, TypeVarTuple, Unpack
 
 if sys.version_info < (3, 15):
-    from typing_extensions import TypeForm
+    from typing_extensions import TypeForm as TypeForm
 else:
-    from typing import TypeForm
+    from typing import TypeForm as TypeForm
 
 JsonType = None | bool | int | float | str | dict[str, "JsonType"] | list["JsonType"]
 
@@ -47,30 +47,32 @@ Connection: TypeAlias = asyncpg.Connection | asyncpg.pool.PoolConnectionProxy
 
 
 class CountMismatchError(TypeError):
-    "Raised when a prepared statement takes or returns a different number of parameters or columns than declared in Python."
+    """Raised when a prepared statement takes or returns a different number of parameters or columns than declared in Python."""
 
 
 class TypeMismatchError(TypeError):
-    "Raised when a prepared statement takes or returns a PostgreSQL type incompatible with the declared Python type."
+    """Raised when a prepared statement takes or returns a PostgreSQL type incompatible with the declared Python type."""
 
 
 class NameMismatchError(TypeError):
-    "Raised when the name of a result-set column differs from what is declared in Python."
+    """Raised when the name of a result-set column differs from what is declared in Python."""
 
 
 class EnumMismatchError(TypeError):
-    "Raised when a prepared statement takes or returns a PostgreSQL enum type whose permitted set of values differs from what is declared in Python."
+    """Raised when a prepared statement takes or returns a PostgreSQL enum type whose permitted set of values differs from what is declared in Python."""
 
 
 class NoneTypeError(TypeError):
-    "Raised when a column marked as required contains a `NULL` value."
+    """Raised when a column marked as required contains a `NULL` value."""
 
 
 if sys.version_info < (3, 11):
 
-    def is_enum_type(typ: Any) -> TypeGuard[type[enum.Enum]]:
+    def is_enum_type(typ: TypeForm[Any]) -> TypeGuard[type[enum.Enum]]:
         """
-        `True` if the specified type is an enumeration type.
+        Checks if the specified type is an enumeration type.
+
+        :returns: `True` if the specified type is an enumeration type.
         """
 
         # use an explicit isinstance(..., type) check to filter out special forms like generics
@@ -79,34 +81,42 @@ if sys.version_info < (3, 11):
 
 else:
 
-    def is_enum_type(typ: Any) -> TypeGuard[type[enum.Enum]]:
+    def is_enum_type(typ: TypeForm[Any]) -> TypeGuard[type[enum.Enum]]:
         """
-        `True` if the specified type is an enumeration type.
+        Checks if the specified type is an enumeration type.
+
+        :returns: `True` if the specified type is an enumeration type.
         """
 
         return isinstance(typ, enum.EnumType)
 
 
-def is_union_type(tp: Any) -> bool:
+def is_union_type(tp: TypeForm[Any]) -> bool:
     """
-    `True` if `tp` is a union type such as `A | B` or `Union[A, B]`.
+    Checks if the specified type is a union type.
+
+    :returns: `True` if `tp` is a union type such as `A | B` or `Union[A, B]`.
     """
 
     origin = get_origin(tp)
     return origin is Union or origin is UnionType
 
 
-def is_optional_type(tp: Any) -> bool:
+def is_optional_type(tp: TypeForm[Any]) -> bool:
     """
-    `True` if `tp` is an optional type such as `T | None`, `Optional[T]` or `Union[T, None]`.
+    Checks if the specified type is an optional type.
+
+    :returns: `True` if `tp` is an optional type such as `T | None`, `Optional[T]` or `Union[T, None]`.
     """
 
     return is_union_type(tp) and any(a is type(None) for a in get_args(tp))
 
 
-def is_standard_type(tp: Any) -> bool:
+def is_standard_type(tp: TypeForm[Any]) -> bool:
     """
-    `True` if the type represents a built-in or a well-known standard type.
+    Checks if the specified type is a built-in or a well-known standard type.
+
+    :returns: `True` if the type represents a built-in or a well-known standard type.
     """
 
     return tp.__module__ == "builtins" or tp.__module__ == UnionType.__module__
@@ -114,7 +124,9 @@ def is_standard_type(tp: Any) -> bool:
 
 def is_json_type(tp: Any) -> bool:
     """
-    `True` if the type represents an object de-serialized from a JSON string.
+    Checks if the specified type represents an object de-serialized from a JSON string.
+
+    :returns: `True` if the type represents an object de-serialized from a JSON string.
     """
 
     return tp in [JsonType, RequiredJsonType]
@@ -122,7 +134,9 @@ def is_json_type(tp: Any) -> bool:
 
 def is_inet_type(tp: Any) -> bool:
     """
-    `True` if the type represents an IP address or network.
+    Checks if the specified type represents an IP address or network.
+
+    :returns: `True` if the type represents an IP address or network.
     """
 
     return tp in [IPv4Address, IPv6Address, IPv4Network, IPv6Network]
@@ -131,18 +145,18 @@ def is_inet_type(tp: Any) -> bool:
 def make_union_type(tpl: list[Any]) -> UnionType:
     """
     Creates a `UnionType` (a.k.a. `A | B | C`) dynamically at run time.
+
+    :raises ValueError: If fewer than two types are provided.
     """
 
     if len(tpl) < 2:
         raise ValueError("expected: at least two types to make a `UnionType`")
 
-    return reduce(lambda a, b: a | b, tpl)
+    return typing.cast(UnionType, reduce(lambda a, b: a | b, tpl))
 
 
 def get_required_type(tp: Any) -> Any:
-    """
-    Removes `None` from an optional type (i.e. a union type that has `None` as a member).
-    """
+    """Removes `None` from an optional type (i.e. a union type that has `None` as a member)."""
 
     if not is_optional_type(tp):
         return tp
@@ -205,10 +219,12 @@ JSON_ENCODER = _json_encoder()
 
 def get_output_converter_for(tp: Any) -> Callable[[Any], Any]:
     """
-    Returns a callable that takes a wire type and returns a target type.
+    De-serializes data from wire type to target type.
 
     A wire type is one of the types returned by asyncpg.
     A target type is one of the types supported by the library.
+
+    :returns: A callable that takes a wire type and returns a target type.
     """
 
     if is_json_type(tp):
@@ -216,15 +232,17 @@ def get_output_converter_for(tp: Any) -> Callable[[Any], Any]:
         return JSON_DECODER
     else:
         # target data types that require conversion must have a single-argument `__init__` that takes an object of the source type
-        return tp
+        return typing.cast(Callable[[Any], Any], tp)
 
 
 def get_input_converter_for(tp: Any) -> Callable[[Any], Any]:
     """
-    Returns a callable that takes a source type and returns a wire type.
+    Serializes data from source type to wire type.
 
     A source type is one of the types supported by the library.
     A wire type is one of the types returned by asyncpg.
+
+    :returns: A callable that takes a source type and returns a wire type.
     """
 
     if is_json_type(tp):
@@ -232,7 +250,7 @@ def get_input_converter_for(tp: Any) -> Callable[[Any], Any]:
         return JSON_ENCODER
     else:
         # source data types that require conversion must have a single-argument `__init__` that takes an object of the source type
-        return tp
+        return typing.cast(Callable[[Any], Any], tp)
 
 
 # maps PostgreSQL internal type names to compatible Python types
@@ -296,7 +314,7 @@ _NAME_TO_TYPE: dict[str, tuple[Any, ...]] = {
 
 
 def type_to_str(tp: Any) -> str:
-    "Emits a friendly name for a type."
+    """Emits a friendly name for a type."""
 
     if isinstance(tp, type):
         return tp.__name__
@@ -305,9 +323,7 @@ def type_to_str(tp: Any) -> str:
 
 
 class _TypeVerifier:
-    """
-    Verifies if the Python target type can represent the PostgreSQL source type.
-    """
+    """Verifies if the Python target type can represent the PostgreSQL source type."""
 
     _connection: Connection
 
@@ -317,57 +333,90 @@ class _TypeVerifier:
     async def _check_enum_type(self, pg_name: str, pg_type: asyncpg.Type, data_type: type[enum.Enum]) -> None:
         """
         Verifies if a Python enumeration type matches a PostgreSQL enumeration type.
+
+        :raises TypeMismatchError: If an enum value is not a string.
+        :raises EnumMismatchError: If the enum values do not match the PostgreSQL type.
         """
 
         for e in data_type:
             if not isinstance(e.value, str):
-                raise TypeMismatchError(f"expected: Python enum type `{type_to_str(data_type)}` with `str` values; got: `{type_to_str(type(e.value))}` for enum field `{e.name}`")
+                raise TypeMismatchError(
+                    f"expected: Python enum type `{type_to_str(data_type)}` with `str` values; got: `{type_to_str(type(e.value))}` for enum field `{e.name}`"
+                )
 
         py_values = set(e.value for e in data_type)
 
-        rows = await self._connection.fetch("SELECT enumlabel FROM pg_enum WHERE enumtypid = $1 ORDER BY enumsortorder;", pg_type.oid)
+        rows = await self._connection.fetch("SELECT enumlabel FROM pg_enum WHERE enumtypid = $1 ORDER BY enumsortorder;", pg_type.oid)  # cspell:disable-line
         db_values = set(row[0] for row in rows)
 
         db_extra = db_values - py_values
         if db_extra:
-            raise EnumMismatchError(f"expected: Python enum type `{type_to_str(data_type)}` to match values of PostgreSQL enum type `{pg_type.name}` for {pg_name}; missing value(s): {', '.join(f'`{val}`' for val in db_extra)})")
+            raise EnumMismatchError(
+                f"expected: Python enum type `{type_to_str(data_type)}` to match values of PostgreSQL enum type "
+                f"`{pg_type.name}` for {pg_name}; "
+                f"missing value(s): {', '.join(f'`{val}`' for val in db_extra)})"
+            )
 
         py_extra = py_values - db_values
         if py_extra:
-            raise EnumMismatchError(f"expected: Python enum type `{type_to_str(data_type)}` to match values of PostgreSQL enum type `{pg_type.name}` for {pg_name}; got extra value(s): {', '.join(f'`{val}`' for val in py_extra)})")
+            raise EnumMismatchError(
+                f"expected: Python enum type `{type_to_str(data_type)}` to match values of PostgreSQL enum type "
+                f"`{pg_type.name}` for {pg_name}; "
+                f"got extra value(s): {', '.join(f'`{val}`' for val in py_extra)})"
+            )
 
     async def check_data_type(self, pg_name: str, pg_type: asyncpg.Type, data_type: TypeForm[Any]) -> None:
         """
         Verifies if the Python target type can represent the PostgreSQL source type.
+
+        :raises TypeMismatchError: If the Python type cannot represent the PostgreSQL type.
         """
 
         if pg_type.schema == "pg_catalog":  # well-known PostgreSQL types
             if is_enum_type(data_type):
                 if pg_type.name not in ["bpchar", "varchar", "text"]:
-                    raise TypeMismatchError(f"expected: Python enum type `{type_to_str(data_type)}` for {pg_name}; got: PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` instead of `char`, `varchar` or `text`")
+                    raise TypeMismatchError(
+                        f"expected: Python enum type `{type_to_str(data_type)}` for {pg_name}; "
+                        f"got: PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` instead of `char`, `varchar` or `text`"
+                    )
             elif pg_type.kind == "array" and get_origin(data_type) is list:
                 if not pg_type.name.endswith("[]"):
-                    raise TypeMismatchError(f"expected: Python list type `{type_to_str(data_type)}` for {pg_name}; got: PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` instead of array")
+                    raise TypeMismatchError(
+                        f"expected: Python list type `{type_to_str(data_type)}` for {pg_name}; "
+                        f"got: PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` instead of array"
+                    )
 
                 expected_types = _NAME_TO_TYPE.get(pg_type.name[:-2])
                 if expected_types is None:
-                    raise TypeMismatchError(f"expected: Python list type `{type_to_str(data_type)}` for {pg_name}; got: unrecognized PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`")
+                    raise TypeMismatchError(
+                        f"expected: Python list type `{type_to_str(data_type)}` for {pg_name}; "
+                        f"got: unrecognized PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`"
+                    )
                 elif get_args(data_type)[0] not in expected_types:
                     if len(expected_types) == 1:
                         target = f"the Python type `{type_to_str(expected_types[0])}`"
                     else:
                         target = f"one of the Python types {', '.join(f'`{type_to_str(tp)}`' for tp in expected_types)}"
-                    raise TypeMismatchError(f"expected: Python list type `{type_to_str(data_type)}` for {pg_name}; got: incompatible PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` whose elements convert to {target}")
+                    raise TypeMismatchError(
+                        f"expected: Python list type `{type_to_str(data_type)}` for {pg_name}; "
+                        f"got: incompatible PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` whose elements convert to {target}"
+                    )
             else:
                 expected_types = _NAME_TO_TYPE.get(pg_type.name)
                 if expected_types is None:
-                    raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; got: unrecognized PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`")
+                    raise TypeMismatchError(
+                        f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; "
+                        f"got: unrecognized PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`"
+                    )
                 elif data_type not in expected_types:
                     if len(expected_types) == 1:
                         target = f"the Python type `{type_to_str(expected_types[0])}`"
                     else:
                         target = f"one of the Python types {', '.join(f'`{type_to_str(tp)}`' for tp in expected_types)}"
-                    raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; got: incompatible PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` which converts to {target}")
+                    raise TypeMismatchError(
+                        f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; "
+                        f"got: incompatible PostgreSQL type `{pg_type.kind}` of `{pg_type.name}` which converts to {target}"
+                    )
         elif pg_type.kind == "composite":  # PostgreSQL composite types
             # user-defined composite types registered with `conn.set_type_codec()` typically using `format="tuple"`
             pass
@@ -375,7 +424,9 @@ class _TypeVerifier:
             if is_enum_type(data_type):
                 await self._check_enum_type(pg_name, pg_type, data_type)
             elif is_standard_type(data_type):
-                raise TypeMismatchError(f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; got: PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`")
+                raise TypeMismatchError(
+                    f"expected: Python type `{type_to_str(data_type)}` for {pg_name}; got: PostgreSQL type `{pg_type.kind}` of `{pg_type.name}`"
+                )
             else:
                 # user-defined types registered with `conn.set_type_codec()`
                 pass
@@ -391,7 +442,7 @@ class _Placeholder:
 
 
 class _ResultsetWrapper:
-    "Wraps result-set rows into a tuple or named tuple."
+    """Wraps result-set rows into a tuple or named tuple."""
 
     init: Callable[..., tuple[Any, ...]] | None
     iterable: Callable[[Iterable[Any]], tuple[Any, ...]]
@@ -409,9 +460,7 @@ class _ResultsetWrapper:
 
 
 class _SQLObject:
-    """
-    Associates input and output type information with a SQL statement.
-    """
+    """Associates input and output type information with a SQL statement."""
 
     _parameter_data_types: tuple[_Placeholder, ...]
     _resultset_data_types: tuple[TypeForm[Any], ...]
@@ -425,19 +474,19 @@ class _SQLObject:
 
     @property
     def parameter_data_types(self) -> tuple[_Placeholder, ...]:
-        "Expected inbound parameter data types."
+        """Expected inbound parameter data types."""
 
         return self._parameter_data_types
 
     @property
     def resultset_data_types(self) -> tuple[TypeForm[Any], ...]:
-        "Expected column data types in the result-set."
+        """Expected column data types in the result-set."""
 
         return self._resultset_data_types
 
     @property
     def resultset_column_names(self) -> tuple[str, ...] | None:
-        "Expected column names in the result-set."
+        """Expected column names in the result-set."""
 
         return self._resultset_column_names
 
@@ -478,7 +527,9 @@ class _SQLObject:
 
     def _raise_required_is_none(self, row: tuple[Any, ...], row_index: int | None = None) -> None:
         """
-        Raises an error with the index of the first column value that is of a required type but has been assigned a value of `None`.
+        Raises an error with the index of the first required column assigned a value of `None`.
+
+        :raises NoneTypeError: If a required column contains `None`.
         """
 
         for col_index in range(len(row)):
@@ -490,9 +541,7 @@ class _SQLObject:
                 raise NoneTypeError(f"expected: {self._resultset_data_types[col_index]} in {row_col_spec}; got: NULL")
 
     def check_rows(self, rows: list[tuple[Any, ...]]) -> None:
-        """
-        Verifies if declared types match actual value types in a resultset.
-        """
+        """Verifies if declared types match actual value types in a resultset."""
 
         if not rows:
             return
@@ -534,21 +583,30 @@ class _SQLObject:
             case 7:
                 for r, row in enumerate(rows):
                     a, b, c, d, e, f, g = row
-                    if required & ((a is None) | (b is None) << 1 | (c is None) << 2 | (d is None) << 3 | (e is None) << 4 | (f is None) << 5 | (g is None) << 6):
+                    if required & (
+                        (a is None) | (b is None) << 1 | (c is None) << 2 | (d is None) << 3 | (e is None) << 4 | (f is None) << 5 | (g is None) << 6
+                    ):
                         self._raise_required_is_none(row, r)
             case 8:
                 for r, row in enumerate(rows):
                     a, b, c, d, e, f, g, h = row
-                    if required & ((a is None) | (b is None) << 1 | (c is None) << 2 | (d is None) << 3 | (e is None) << 4 | (f is None) << 5 | (g is None) << 6 | (h is None) << 7):
+                    if required & (
+                        (a is None)
+                        | (b is None) << 1
+                        | (c is None) << 2
+                        | (d is None) << 3
+                        | (e is None) << 4
+                        | (f is None) << 5
+                        | (g is None) << 6
+                        | (h is None) << 7
+                    ):
                         self._raise_required_is_none(row, r)
             case _:
                 for r, row in enumerate(rows):
                     self._raise_required_is_none(row, r)
 
     def check_row(self, row: tuple[Any, ...]) -> None:
-        """
-        Verifies if declared types match actual value types in a single row.
-        """
+        """Verifies if declared types match actual value types in a single row."""
 
         if self._required:
             self._raise_required_is_none(row)
@@ -556,6 +614,8 @@ class _SQLObject:
     def check_column(self, column: list[Any]) -> None:
         """
         Verifies if the declared type matches the actual value type of a single-column resultset.
+
+        :raises NoneTypeError: If a required column contains `None`.
         """
 
         if self._required:
@@ -566,6 +626,8 @@ class _SQLObject:
     def check_value(self, value: Any) -> None:
         """
         Verifies if the declared type matches the actual value type.
+
+        :raises NoneTypeError: If a required value is `None`.
         """
 
         if self._required and value is None:
@@ -573,20 +635,22 @@ class _SQLObject:
 
     def convert_arg_lists(self, arg_lists: Iterable[Sequence[Any]]) -> Iterable[Sequence[Any]]:
         """
-        Converts a list of Python query argument tuples to a list of PostgreSQL parameter tuples.
+        Converts Python query argument tuples to PostgreSQL parameter tuples.
+
+        :yields: Converted parameter tuples.
         """
 
         cast = self._parameter_cast
         if cast:
             converters = self._parameter_converters
-            yield from (tuple((converters[i](value) if (value := arg[i]) is not None and cast >> i & 1 else value) for i in range(len(arg))) for arg in arg_lists)
+            yield from (
+                tuple((converters[i](value) if (value := arg[i]) is not None and cast >> i & 1 else value) for i in range(len(arg))) for arg in arg_lists
+            )
         else:
             yield from arg_lists
 
     def convert_arg_list(self, arg_list: Sequence[Any]) -> Sequence[Any]:
-        """
-        Converts Python query arguments to PostgreSQL parameters.
-        """
+        """Converts Python query arguments to PostgreSQL parameters."""
 
         cast = self._parameter_cast
         if cast:
@@ -773,7 +837,10 @@ class _SQLObject:
             ### END OF AUTO-GENERATED BLOCK FOR convert_cast ###
             case _:
                 converters = self._resultset_converters
-                return [iterable_wrapper((converters[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(columns)) for row in rows]
+                return [
+                    iterable_wrapper((converters[i](value) if (value := row[i]) is not None and cast >> i & 1 else value) for i in range(columns))
+                    for row in rows
+                ]
 
     def _convert_rows_pass(self, rows: list[asyncpg.Record]) -> list[tuple[Any, ...]]:
         init_wrapper = self._resultset_wrapper.init
@@ -864,9 +931,7 @@ class _SQLObject:
 
     @abstractmethod
     def query(self) -> str:
-        """
-        Returns a SQL query string with PostgreSQL ordinal placeholders.
-        """
+        """Returns a SQL query string with PostgreSQL ordinal placeholders."""
         ...
 
     def __repr__(self) -> str:
@@ -877,14 +942,12 @@ class _SQLObject:
 
 
 if sys.version_info >= (3, 14):
-    from string.templatelib import Interpolation, Template  # type: ignore[import-not-found]
+    from string.templatelib import Interpolation, Template
 
     SQLExpression: TypeAlias = Template | LiteralString
 
     class _SQLTemplate(_SQLObject):
-        """
-        A SQL query specified with the Python t-string syntax.
-        """
+        """A SQL query specified with the Python t-string syntax."""
 
         _strings: tuple[str, ...]
         _placeholders: tuple[_Placeholder, ...]
@@ -912,7 +975,7 @@ if sys.version_info >= (3, 14):
 
             if len(self.parameter_data_types) > 0:
 
-                def _to_placeholder(ip: Interpolation[Any]) -> _Placeholder:  # type: ignore[type-arg]
+                def _to_placeholder(ip: Interpolation[Any]) -> _Placeholder:
                     if not isinstance(ip.value, int):
                         raise TypeError(f"interpolation `{ip.expression}` is not an integer")
                     ordinal = ip.value
@@ -937,9 +1000,7 @@ else:
 
 
 class _SQLString(_SQLObject):
-    """
-    A SQL query specified as a plain string (e.g. f-string).
-    """
+    """A SQL query specified as a plain string (e.g. f-string)."""
 
     _sql: str
 
@@ -960,15 +1021,11 @@ class _SQLString(_SQLObject):
 
 
 class _SQL(Protocol):
-    """
-    Represents a SQL statement with associated type information.
-    """
+    """Represents a SQL statement with associated type information."""
 
 
 class _SQLImpl(_SQL):
-    """
-    Forwards input data to an `asyncpg.PreparedStatement`, and validates output data (if necessary).
-    """
+    """Forwards input data to an `asyncpg.PreparedStatement`, and validates output data (if necessary)."""
 
     _sql: _SQLObject
 
@@ -1120,9 +1177,7 @@ RS = TypeVar("RS", bound=tuple[Any, ...])
 
 
 class SQLFactory:
-    """
-    Creates type-safe SQL queries.
-    """
+    """Creates type-safe SQL queries."""
 
     ### START OF AUTO-GENERATED BLOCK FOR sql ###
     @overload
@@ -1146,7 +1201,15 @@ class SQLFactory:
 
     ### END OF AUTO-GENERATED BLOCK FOR sql ###
 
-    def sql(self, stmt: SQLExpression, *, args: TypeForm[Any] | None = None, resultset: TypeForm[Any] | None = None, arg: TypeForm[Any] | None = None, result: TypeForm[Any] | None = None) -> _SQL:
+    def sql(
+        self,
+        stmt: SQLExpression,
+        *,
+        args: TypeForm[Any] | None = None,
+        resultset: TypeForm[Any] | None = None,
+        arg: TypeForm[Any] | None = None,
+        result: TypeForm[Any] | None = None,
+    ) -> _SQL:
         """
         Creates a SQL statement with associated type information.
 
@@ -1155,6 +1218,7 @@ class SQLFactory:
         :param resultset: Type signature for multiple resultset columns (e.g. `tuple[datetime, Decimal, str]`).
         :param arg: Type signature for a single input parameter (e.g. `int`).
         :param result: Type signature for a single result column (e.g. `UUID`).
+        :returns: An object representing the SQL statement with type information.
         """
 
         input_data_types, output_data_types, names, wrapper = _sql_args_resultset(args=args, resultset=resultset, arg=arg, result=result)
@@ -1193,7 +1257,15 @@ class SQLFactory:
 
     ### END OF AUTO-GENERATED BLOCK FOR unsafe_sql ###
 
-    def unsafe_sql(self, stmt: str, *, args: TypeForm[Any] | None = None, resultset: TypeForm[Any] | None = None, arg: TypeForm[Any] | None = None, result: TypeForm[Any] | None = None) -> _SQL:
+    def unsafe_sql(
+        self,
+        stmt: str,
+        *,
+        args: TypeForm[Any] | None = None,
+        resultset: TypeForm[Any] | None = None,
+        arg: TypeForm[Any] | None = None,
+        result: TypeForm[Any] | None = None,
+    ) -> _SQL:
         """
         Creates a SQL statement with associated type information from a string.
 
@@ -1205,6 +1277,7 @@ class SQLFactory:
         :param resultset: Type signature for multiple resultset columns (e.g. `tuple[datetime, Decimal, str]`).
         :param arg: Type signature for a single input parameter (e.g. `int`).
         :param result: Type signature for a single result column (e.g. `UUID`).
+        :returns: An object representing the SQL statement with type information.
         """
 
         input_data_types, output_data_types, names, wrapper = _sql_args_resultset(args=args, resultset=resultset, arg=arg, result=result)
@@ -1215,7 +1288,11 @@ class SQLFactory:
 def _sql_args_resultset(
     *, args: TypeForm[Any] | None = None, resultset: TypeForm[Any] | None = None, arg: TypeForm[Any] | None = None, result: TypeForm[Any] | None = None
 ) -> tuple[tuple[Any, ...], tuple[Any, ...], tuple[str, ...] | None, _ResultsetWrapper]:
-    "Parses an argument/resultset signature into input/output types."
+    """
+    Parses an argument/resultset signature into input/output types.
+
+    :raises TypeError: If conflicting or invalid argument/resultset types are provided.
+    """
 
     if args is not None and arg is not None:
         raise TypeError("expected: either `args` or `arg`; got: both")

@@ -53,6 +53,20 @@ dev = [
 "Homepage" = "https://github.com/hunyadi/asyncpg_typed"
 "Source" = "https://github.com/hunyadi/asyncpg_typed"
 
+[tool.mypy]
+check_untyped_defs = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_untyped_defs = true
+show_column_numbers = true
+strict = true
+strict_bytes = true
+strict_equality = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_ignores = true
+
 [tool.setuptools]
 include-package-data = true
 packages = ["asyncpg_typed"]
@@ -65,8 +79,19 @@ version = { attr = "asyncpg_typed.__version__" }
 "asyncpg_typed" = ["py.typed"]
 
 [tool.ruff]
-line-length = 240
+line-length = 160
 target-version = "py314"
 
+[tool.ruff.format]
+indent-style = "space"
+docstring-code-format = true
+preview = true
+
 [tool.ruff.lint]
-select = ["E", "F", "B", "I", "Q"]
+select = ["B", "D", "DOC", "E", "F", "B", "I", "Q", "W"]
+preview = true
+ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107", "D202", "D212", "D401", "B903", "DOC201", "DOC402", "DOC501", "DOC502", "E266"]
+extend-select = ["D213", "G004"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
